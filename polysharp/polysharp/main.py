@@ -78,7 +78,10 @@ class App:
         try:
             picks, summary = await select_wallets(self.api, self.cfg, self.store.blocked())
             if not picks and summary["evaluated"] == 0:
-                msg = "⚠️ Refresh got 0 leaderboard candidates — API unreachable? Keeping current list."
+                err = summary.get("errors") or []
+                msg = ("⚠️ Refresh found 0 usable candidates — keeping current list."
+                       + (f"\nFirst error: {esc(err[0])}" if err else
+                          "\nNo wallet cleared MIN_LB_VOL; lower it or check LB_SLICES."))
             else:
                 self.store.replace_auto_wallets(picks)
                 self.watcher.reload_wallets()

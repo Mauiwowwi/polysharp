@@ -76,17 +76,22 @@ def passes(stats, cfg):
     return not reasons, reasons
 
 
-async def gather_candidates(api, cfg):
+async def gather_candidates(api, cfg, errors=None):
     cands = {}
     for sl in cfg.lb_slices:
-        parts = (sl.split(":") + ["OVERALL", "PNL"])[:3]
+        parts = [x.strip().upper() for x in sl.split(":")]
+        parts += [""] * (3 - len(parts))
         period, category, order = parts[0], parts[1] or "OVERALL", parts[2] or "PNL"
+        if order not in ("PNL", "VOL"):
+            order = "PNL"
         for offset in range(0, cfg.lb_depth, 50):
             try:
                 rows = await api.leaderboard(period, category, min(50, cfg.lb_depth - offset),
                                              offset, order)
             except Exception as e:
                 log.warning("leaderboard %s offset %d failed: %s", sl, offset, e)
+                if errors is not None:
+                    errors.append(f"{sl}: {str(e)[:90]}")
                 break
             for r in rows:
                 addr = (r.get("proxyWallet") or "").lower()
@@ -113,7 +118,8 @@ async def evaluate(api, cfg, address):
 
 
 async def select_wallets(api, cfg, blocked=frozenset(), progress=None):
-    cands = await gather_candidates(api, cfg)
+    errors = []
+    cands = await gather_candidates(api, cfg, errors)
     total = len(cands)
     cands = {a: c for a, c in cands.items()
              if a not in blocked and c["lb_vol"] >= cfg.min_lb_vol}
@@ -141,6 +147,6 @@ async def select_wallets(api, cfg, blocked=frozenset(), progress=None):
     keep.sort(key=lambda c: c["stats"]["score"], reverse=True)
     picks = keep[: cfg.max_wallets]
     summary = {"candidates": total, "evaluated": len(cands), "passed": len(keep),
-               "picked": len(picks)}
+               "picked": len(picks), "errors": errors}
     log.info("Selection: %s", summary)
     return picks, summary

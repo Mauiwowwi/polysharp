@@ -246,3 +246,19 @@ async def test_volume_filter_drops_small_sample_high_roi(tmp_path):
     assert any(w.startswith("n=") for w in why) and any(w.startswith("staked=") for w in why)
     picks, _ = await select_wallets(api, c)
     assert D not in [p["address"] for p in picks]
+
+
+@pytest.mark.asyncio
+async def test_slice_parsing_old_and_new_formats(tmp_path):
+    calls = []
+
+    class Rec(FakeAPI):
+        async def leaderboard(self, period, category, limit, offset, order="PNL"):
+            calls.append((period, category, order))
+            return []
+
+    c = cfg(tmp_path, lb_slices=["MONTH:OVERALL", "ALL:SPORTS:VOL", "WEEK", "ALL:SPORTS:junk"])
+    from polysharp.selector import gather_candidates
+    await gather_candidates(Rec(), c)
+    assert calls == [("MONTH", "OVERALL", "PNL"), ("ALL", "SPORTS", "VOL"),
+                     ("WEEK", "OVERALL", "PNL"), ("ALL", "SPORTS", "PNL")]
