@@ -24,18 +24,23 @@ class Config:
     db_path: str = field(default_factory=lambda: _env("DB_PATH", "/data/polysharp.db"))
 
     # --- Wallet selection ---------------------------------------------------
-    # Leaderboard slices to pull candidates from, "PERIOD:CATEGORY" pairs.
-    lb_slices: list = field(default_factory=lambda: _env(
-        "LB_SLICES", ["MONTH:OVERALL", "ALL:OVERALL", "MONTH:SPORTS", "ALL:SPORTS"], list))
-    lb_depth: int = field(default_factory=lambda: _env("LB_DEPTH", 100, int))  # per slice
+    # Leaderboard slices to pull candidates from: "PERIOD:CATEGORY:ORDER" (ORDER = PNL or VOL).
+    # VOL slices surface high-volume grinders that never top the P&L board.
+    lb_slices: list = field(default_factory=lambda: _env("LB_SLICES", [
+        "MONTH:OVERALL:PNL", "ALL:OVERALL:PNL", "MONTH:SPORTS:PNL", "ALL:SPORTS:PNL",
+        "MONTH:OVERALL:VOL", "ALL:OVERALL:VOL", "MONTH:SPORTS:VOL", "ALL:SPORTS:VOL"], list))
+    lb_depth: int = field(default_factory=lambda: _env("LB_DEPTH", 150, int))  # per slice
+    # Cheap pre-cut before pulling full history: biggest leaderboard volume seen for the wallet
+    min_lb_vol: float = field(default_factory=lambda: _env("MIN_LB_VOL", 250000, float))
     max_wallets: int = field(default_factory=lambda: _env("MAX_WALLETS", 40, int))
     refresh_hours: float = field(default_factory=lambda: _env("REFRESH_HOURS", 24, float))
 
     # Filters applied to each candidate's closed-position history
-    min_closed: int = field(default_factory=lambda: _env("MIN_CLOSED", 40, int))
-    min_win_rate: float = field(default_factory=lambda: _env("MIN_WIN_RATE", 0.55, float))
-    min_roi: float = field(default_factory=lambda: _env("MIN_ROI", 0.04, float))
-    min_realized_pnl: float = field(default_factory=lambda: _env("MIN_REALIZED_PNL", 25000, float))
+    min_closed: int = field(default_factory=lambda: _env("MIN_CLOSED", 150, int))
+    min_staked: float = field(default_factory=lambda: _env("MIN_STAKED", 1000000, float))
+    min_win_rate: float = field(default_factory=lambda: _env("MIN_WIN_RATE", 0.50, float))
+    min_roi: float = field(default_factory=lambda: _env("MIN_ROI", 0.03, float))
+    min_realized_pnl: float = field(default_factory=lambda: _env("MIN_REALIZED_PNL", 50000, float))
     max_days_inactive: int = field(default_factory=lambda: _env("MAX_DAYS_INACTIVE", 14, int))
     history_positions: int = field(default_factory=lambda: _env("HISTORY_POSITIONS", 500, int))
 

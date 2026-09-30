@@ -37,9 +37,9 @@ class PolyAPI:
                 delay *= 2
 
     # --- endpoints ----------------------------------------------------------
-    async def leaderboard(self, period="MONTH", category="OVERALL", limit=50, offset=0):
+    async def leaderboard(self, period="MONTH", category="OVERALL", limit=50, offset=0, order="PNL"):
         return await self._get("/v1/leaderboard", {
-            "timePeriod": period, "category": category, "orderBy": "PNL",
+            "timePeriod": period, "category": category, "orderBy": order,
             "limit": limit, "offset": offset}) or []
 
     async def closed_positions(self, user, max_rows=500):

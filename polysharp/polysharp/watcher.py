@@ -194,7 +194,8 @@ class Watcher:
         name = esc(w.get("name") or addr[:10])
         bits = [f"👤 <a href=\"https://polymarket.com/profile/{addr}\">{name}</a>"]
         if s.get("n"):
-            bits.append(f"win {s['win_rate']:.0%} · ROI {s['roi']:+.1%} · n={s['n']}")
+            bits.append(f"ROI {s['roi']:+.1%} · ${s.get('cost', 0) / 1e6:,.1f}M staked · "
+                        f"n={s['n']} · win {s['win_rate']:.0%}")
         ranks = s.get("ranks") or {}
         if ranks:
             best = min(ranks.items(), key=lambda kv: kv[1])

@@ -46,8 +46,8 @@ def fmt_wallet(addr, w):
     if not s.get("n"):
         return f"• <a href=\"https://polymarket.com/profile/{addr}\">{name}</a> ({w.get('source')})"
     return (f"• <a href=\"https://polymarket.com/profile/{addr}\">{name}</a> — "
-            f"win {s['win_rate']:.0%} · ROI {s['roi']:+.1%} · n={s['n']} · "
-            f"P&L ${s['pnl']:,.0f}"
+            f"ROI {s['roi']:+.1%} · ${s['cost'] / 1e6:,.2f}M staked · n={s['n']} · "
+            f"win {s['win_rate']:.0%} · P&L ${s['pnl']:,.0f}"
             + (f" · {s['taker_share']:.0%} taker" if s.get("taker_share") is not None else "")
             + (" · manual" if w.get("source") == "manual" else ""))
 
@@ -77,13 +77,13 @@ class App:
         self.refreshing = True
         try:
             picks, summary = await select_wallets(self.api, self.cfg, self.store.blocked())
-            if not picks and summary["candidates"] == 0:
+            if not picks and summary["evaluated"] == 0:
                 msg = "⚠️ Refresh got 0 leaderboard candidates — API unreachable? Keeping current list."
             else:
                 self.store.replace_auto_wallets(picks)
                 self.watcher.reload_wallets()
                 msg = (f"🔄 Wallet refresh: {summary['candidates']} candidates → "
-                       f"{summary['passed']} passed filters → tracking {summary['picked']} "
+                       f"{summary['evaluated']} with volume → {summary['passed']} passed filters → tracking {summary['picked']} "
                        f"(+ manual). Total live: {len(self.watcher.wallets)}")
             self.store.set("last_refresh", time.time())
             if announce:

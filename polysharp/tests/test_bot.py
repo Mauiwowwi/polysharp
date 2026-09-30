@@ -13,6 +13,8 @@ from polysharp.watcher import Watcher, normalize
 A = "0x" + "a" * 40
 B = "0x" + "b" * 40
 C = "0x" + "c" * 40
+D = "0x" + "d" * 40
+E = "0x" + "e" * 40
 
 
 class FakeTG:
@@ -36,18 +38,24 @@ class FakeAPI:
     async def activity(self, user, start=None, limit=100):
         return self.act.get(user, [])
 
-    async def leaderboard(self, period, category, limit, offset):
+    async def leaderboard(self, period, category, limit, offset, order="PNL"):
         if offset:
             return []
-        return [{"proxyWallet": A, "userName": "alpha", "rank": "3"},
-                {"proxyWallet": B, "userName": "beta", "rank": "5"},
-                {"proxyWallet": C, "userName": "mm", "rank": "1"}]
+        return [{"proxyWallet": A, "userName": "alpha", "rank": "3", "vol": 5e5},
+                {"proxyWallet": B, "userName": "beta", "rank": "5", "vol": 5e5},
+                {"proxyWallet": C, "userName": "mm", "rank": "1", "vol": 9e6},
+                {"proxyWallet": D, "userName": "btystu", "rank": "2", "vol": 3.6e5},
+                {"proxyWallet": E, "userName": "tiny", "rank": "9", "vol": 5e4}]
 
     async def closed_positions(self, user, max_rows=500):
         now = int(time.time())
         if user == A:   # 60 bets, 40 winners, strong margin
             return ([{"totalBought": 2000, "avgPrice": 0.5, "realizedPnl": 600, "timestamp": now}] * 40 +
                     [{"totalBought": 2000, "avgPrice": 0.5, "realizedPnl": -700, "timestamp": now}] * 20)
+        if user == D:   # btystu-style: huge ROI, tiny sample, low volume
+            return [{"totalBought": 10000, "avgPrice": 0.5, "realizedPnl": 3500, "timestamp": now}] * 46
+        if user == E:
+            raise AssertionError("pre-cut wallet should never be fetched")
         if user == B:   # looks good but hides unredeemed losers -> still ok-ish
             return [{"totalBought": 1000, "avgPrice": 0.5, "realizedPnl": 400, "timestamp": now}] * 50
         # market maker: huge volume, thin margin
@@ -64,6 +72,11 @@ def cfg(tmp_path, **kw):
     c.min_alert_usd = 1000
     c.min_realized_pnl = 1000
     c.lb_slices = ["MONTH:OVERALL"]
+    c.min_closed = 40
+    c.min_staked = 20000
+    c.min_lb_vol = 100000
+    c.min_win_rate = 0.55
+    c.min_roi = 0.04
     for k, v in kw.items():
         setattr(c, k, v)
     return c
@@ -76,7 +89,7 @@ def fill(wallet, size=5000, price=0.4, tx="0xt1", side="BUY", asset="111", outco
 
 
 def test_score_and_filters(tmp_path):
-    c = cfg(tmp_path)
+    c = cfg(tmp_path, min_staked=0)
     s = score_history([{"totalBought": 100, "avgPrice": 0.5, "realizedPnl": 20, "timestamp": time.time()}] * 50,
                       [{"curPrice": 0, "initialValue": 500}])
     assert s["n"] == 51 and s["cost"] == 3000 and s["pnl"] == 500
@@ -93,6 +106,7 @@ async def test_selection_drops_market_maker(tmp_path):
     picks, summary = await select_wallets(FakeAPI(), c)
     addrs = [p["address"] for p in picks]
     assert A in addrs and B in addrs and C not in addrs
+    assert summary["candidates"] == 5 and summary["evaluated"] == 4  # tiny pre-cut
     b = next(p for p in picks if p["address"] == B)
     assert b["stats"]["n"] == 51  # unredeemed loser counted
 
@@ -219,3 +233,16 @@ async def test_maker_fill_and_taker_only_mode(tmp_path):
     await w.ingest(normalize(f2, "ws"))
     await asyncio.sleep(0.4)
     assert len(tg.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_volume_filter_drops_small_sample_high_roi(tmp_path):
+    c = cfg(tmp_path, min_closed=150, min_staked=1_000_000, min_roi=0.03, min_win_rate=0.5,
+            min_realized_pnl=50000)
+    api = FakeAPI()
+    s = await __import__("polysharp.selector", fromlist=["evaluate"]).evaluate(api, c, D)
+    ok, why = passes(s, c)
+    assert s["roi"] > 0.5 and not ok
+    assert any(w.startswith("n=") for w in why) and any(w.startswith("staked=") for w in why)
+    picks, _ = await select_wallets(api, c)
+    assert D not in [p["address"] for p in picks]

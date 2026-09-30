@@ -62,6 +62,8 @@ def passes(stats, cfg):
     reasons = []
     if stats["n"] < cfg.min_closed:
         reasons.append(f"n={stats['n']}")
+    if stats["cost"] < cfg.min_staked:
+        reasons.append(f"staked=${stats['cost']:,.0f}")
     if stats["win_rate"] < cfg.min_win_rate:
         reasons.append(f"win={stats['win_rate']:.0%}")
     if stats["roi"] < cfg.min_roi:
@@ -77,11 +79,12 @@ def passes(stats, cfg):
 async def gather_candidates(api, cfg):
     cands = {}
     for sl in cfg.lb_slices:
-        period, _, category = sl.partition(":")
-        category = category or "OVERALL"
+        parts = (sl.split(":") + ["OVERALL", "PNL"])[:3]
+        period, category, order = parts[0], parts[1] or "OVERALL", parts[2] or "PNL"
         for offset in range(0, cfg.lb_depth, 50):
             try:
-                rows = await api.leaderboard(period, category, min(50, cfg.lb_depth - offset), offset)
+                rows = await api.leaderboard(period, category, min(50, cfg.lb_depth - offset),
+                                             offset, order)
             except Exception as e:
                 log.warning("leaderboard %s offset %d failed: %s", sl, offset, e)
                 break
@@ -90,8 +93,9 @@ async def gather_candidates(api, cfg):
                 if not addr:
                     continue
                 c = cands.setdefault(addr, {"address": addr, "name": r.get("userName") or addr[:10],
-                                            "ranks": {}})
+                                            "ranks": {}, "lb_vol": 0.0})
                 c["ranks"][sl] = int(r.get("rank") or 0)
+                c["lb_vol"] = max(c["lb_vol"], float(r.get("vol") or 0))
             if len(rows) < 50:
                 break
     return cands
@@ -110,8 +114,10 @@ async def evaluate(api, cfg, address):
 
 async def select_wallets(api, cfg, blocked=frozenset(), progress=None):
     cands = await gather_candidates(api, cfg)
-    cands = {a: c for a, c in cands.items() if a not in blocked}
-    log.info("Evaluating %d leaderboard candidates", len(cands))
+    total = len(cands)
+    cands = {a: c for a, c in cands.items()
+             if a not in blocked and c["lb_vol"] >= cfg.min_lb_vol}
+    log.info("Evaluating %d of %d leaderboard candidates (vol pre-cut)", len(cands), total)
 
     async def one(c):
         try:
@@ -134,6 +140,7 @@ async def select_wallets(api, cfg, blocked=frozenset(), progress=None):
             dropped += 1
     keep.sort(key=lambda c: c["stats"]["score"], reverse=True)
     picks = keep[: cfg.max_wallets]
-    summary = {"candidates": len(cands), "passed": len(keep), "picked": len(picks)}
+    summary = {"candidates": total, "evaluated": len(cands), "passed": len(keep),
+               "picked": len(picks)}
     log.info("Selection: %s", summary)
     return picks, summary
