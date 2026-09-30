@@ -1,0 +1,70 @@
+"""Thin async client for Polymarket's public Data API (no auth needed)."""
+import asyncio
+import logging
+
+import httpx
+
+log = logging.getLogger(__name__)
+DATA_API = "https://data-api.polymarket.com"
+
+
+class PolyAPI:
+    def __init__(self, concurrency: int = 6):
+        # trust_env=True -> honours HTTPS_PROXY if Railway egress needs a proxy
+        self.http = httpx.AsyncClient(
+            base_url=DATA_API, timeout=20, trust_env=True,
+            headers={"User-Agent": "polysharp/1.0"})
+        self.sem = asyncio.Semaphore(concurrency)
+
+    async def close(self):
+        await self.http.aclose()
+
+    async def _get(self, path, params, retries=4):
+        delay = 1.0
+        for attempt in range(retries):
+            try:
+                async with self.sem:
+                    r = await self.http.get(path, params=params)
+                if r.status_code == 429 or r.status_code >= 500:
+                    raise httpx.HTTPStatusError(f"{r.status_code}", request=r.request, response=r)
+                r.raise_for_status()
+                return r.json()
+            except (httpx.HTTPError, ValueError) as e:
+                if attempt == retries - 1:
+                    raise
+                log.debug("GET %s failed (%s), retry in %.1fs", path, e, delay)
+                await asyncio.sleep(delay)
+                delay *= 2
+
+    # --- endpoints ----------------------------------------------------------
+    async def leaderboard(self, period="MONTH", category="OVERALL", limit=50, offset=0):
+        return await self._get("/v1/leaderboard", {
+            "timePeriod": period, "category": category, "orderBy": "PNL",
+            "limit": limit, "offset": offset}) or []
+
+    async def closed_positions(self, user, max_rows=500):
+        out, offset = [], 0
+        while len(out) < max_rows:
+            page = await self._get("/closed-positions", {
+                "user": user, "limit": 50, "offset": offset,
+                "sortBy": "TIMESTAMP", "sortDirection": "DESC"}) or []
+            out.extend(page)
+            if len(page) < 50:
+                break
+            offset += 50
+        return out[:max_rows]
+
+    async def positions(self, user, market=None, redeemable=None):
+        params = {"user": user, "sizeThreshold": 1, "limit": 500}
+        if market:
+            params["market"] = market
+        if redeemable is not None:
+            params["redeemable"] = str(bool(redeemable)).lower()
+        return await self._get("/positions", params) or []
+
+    async def activity(self, user, start=None, limit=100):
+        params = {"user": user, "type": "TRADE", "limit": limit,
+                  "sortBy": "TIMESTAMP", "sortDirection": "DESC"}
+        if start:
+            params["start"] = int(start)
+        return await self._get("/activity", params) or []
