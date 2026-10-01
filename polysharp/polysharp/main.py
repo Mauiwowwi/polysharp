@@ -15,7 +15,8 @@ from .markets import Markets
 from .selector import deep_eval, passes, suggest
 from .store import Store
 from .telegram import Telegram, esc
-from .watcher import Watcher
+from .markets import is_live
+from .watcher import Watcher, american, pick_label
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -184,6 +185,59 @@ class App:
             self.watcher.reload_wallets()
         return len(stale)
 
+    def find_wallet(self, query):
+        """Match /top10 <name|address|partial name> against the feed."""
+        q = query.lower().lstrip("@")
+        ws_ = self.watcher.wallets
+        if q in ws_:
+            return q
+        exact = [a for a, w in ws_.items() if (w.get("name") or "").lower() == q]
+        if exact:
+            return exact[0]
+        part = [a for a, w in ws_.items() if q in (w.get("name") or "").lower() or a.startswith(q)]
+        return part[0] if len(part) == 1 else (part or None)
+
+    async def top_positions(self, addr, n=10):
+        """Biggest OPEN sports positions by $ in (resolved ones are excluded)."""
+        rows = await self.api.positions(addr, sort="INITIAL")
+        rows = [r for r in rows if not r.get("redeemable")
+                and 0 < float(r.get("curPrice") or 0) < 1 and float(r.get("size") or 0) >= 1]
+        meta = await self.markets.get({r["conditionId"]: r.get("eventSlug") or r.get("slug") or ""
+                                       for r in rows if r.get("conditionId")})
+        sports = [r for r in rows if (meta.get(r.get("conditionId")) or {}).get("sports")]
+        other = len(rows) - len(sports)
+        pool = sports if self.cfg.sports_only_alerts else rows
+        pool.sort(key=lambda r: -float(r.get("initialValue") or 0))
+        return pool[:n], meta, len(pool), other
+
+    async def format_top10(self, addr):
+        name = (self.watcher.wallets.get(addr) or {}).get("name") or addr[:10]
+        top, meta, total, other = await self.top_positions(addr)
+        if not top:
+            return f"{profile_link(addr, name)} has no open sports positions right now."
+        now = time.time()
+        stake = sum(float(r.get("initialValue") or 0) for r in top)
+        pnl = sum(float(r.get("cashPnl") or 0) for r in top)
+        out = [f"🏆 <b>{profile_link(addr, name)} — top {len(top)} open positions</b>",
+               f"${stake:,.0f} in · now {money(pnl)} · {total} open sports positions"
+               + (f" (+{other} non-sports hidden)" if other else ""), ""]
+        for i, r in enumerate(top, 1):
+            m = meta.get(r.get("conditionId")) or {}
+            league = f"[{m['league'].upper()}] " if m.get("league") else ""
+            gs = m.get("game_start")
+            when = ""
+            if gs:
+                mins = (gs - now) / 60
+                when = (" · 🔴 in-game" if is_live(m, now) else
+                        f" · ⏳ {int(mins // 60)}h {int(mins % 60):02d}m" if mins >= 0 else "")
+            avg, cur = float(r.get("avgPrice") or 0), float(r.get("curPrice") or 0)
+            link = f"https://polymarket.com/event/{r.get('eventSlug') or r.get('slug')}"
+            out.append(f"<b>{i}.</b> {league}<a href=\"{link}\">{esc(r.get('title'))}</a>{when}")
+            out.append(f"   <b>{esc(pick_label(r.get('title'), r.get('outcome')))} @ {avg:.3f} "
+                       f"({american(avg)})</b> · ${float(r.get('initialValue') or 0):,.0f}")
+            out.append(f"   now {cur:.3f} ({american(cur)}) · {money(float(r.get('cashPnl') or 0))}")
+        return "\n".join(out)
+
     # --------------------------------------------------------- morning digest
     async def morning(self, manual=False):
         if self.busy:
@@ -276,6 +330,7 @@ class App:
                     "/remove 0x… — stop alerting\n"
                     "/wallets — your list with sports stats\n"
                     "/stats 0x… — check any wallet (sports ROI, live %, activity)\n"
+                    "/top10 [name] — biggest open positions (no name = pick from buttons)\n"
                     "<b>Shortlist</b>\n"
                     f"/suggest — run the shortlist now (auto daily at {cfg.suggest_time})\n"
                     "/skip 0x… [days] — hide from shortlists (default 30d)\n"
@@ -400,6 +455,26 @@ class App:
             st.set("muted_until", 0)
             return "🔔 Unmuted."
 
+        @tg.command("top10")
+        async def _top10(args):
+            if not w.wallets:
+                return "Your feed is empty. Add one with /add 0x… name"
+            if args:
+                hit = self.find_wallet(" ".join(args))
+                if isinstance(hit, str):
+                    return await self.format_top10(hit)
+                if hit:
+                    return ("Which one?", [[(w.wallets[a].get("name") or a[:10], f"top:{a}")] for a in hit])
+                return (f"No wallet in your feed matches '{esc(' '.join(args))}'. Pick one:",
+                        self._wallet_buttons())
+            return ("🏆 <b>Top 10 open positions</b> — tap an account:", self._wallet_buttons())
+
+        @tg.callback("top")
+        async def _top_cb(addr):
+            if addr not in w.wallets:
+                return "That wallet isn't in your feed any more."
+            return await self.format_top10(addr)
+
         @tg.command("tier")
         async def _tier(args):
             if args and args[0].lower() in ("all", "med", "medium", "high"):
@@ -430,6 +505,11 @@ class App:
             return (f"Taker-only mode: <b>{'ON' if on else 'OFF'}</b>\n"
                     + ("Only alerting on bundles where ≥50% was taken (fees paid)."
                        if on else "Alerting on all trades; conviction trades get ⚡."))
+
+    def _wallet_buttons(self):
+        names = sorted(self.watcher.wallets.items(), key=lambda kv: (kv[1].get("name") or kv[0]).lower())
+        btns = [(w.get("name") or a[:10], f"top:{a}") for a, w in names]
+        return [btns[i:i + 2] for i in range(0, len(btns), 2)]
 
     # -------------------------------------------------------------------- run
     async def run(self):

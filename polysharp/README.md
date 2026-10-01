@@ -75,7 +75,7 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 - Fee-free categories (geopolitics) give no signal.
 
 ## Telegram commands
-- **Feed:** `/add 0x… [name]`, `/remove 0x…`, `/wallets`, `/stats 0x…`
+- **Feed:** `/add 0x… [name]`, `/remove 0x…`, `/wallets`, `/stats 0x…`, `/top10 [name]` (biggest open sports positions by $ in; with no name you get tappable buttons)
 - **Shortlist:** `/suggest` (runs now), `/skip 0x… [days]`
 - **Alerts:** `/min 5000`, `/takeronly on|off`, `/tier all|med|high`, `/livehedges on|off`, `/mute 2h`, `/unmute`, `/status`
 
