@@ -273,7 +273,8 @@ class Watcher:
                                  hedge_vs=hedge_vs, flip_vs=flip_vs, agree=agree, oppose=oppose,
                                  tailed=tailed, live=live, score=score)
         sport = sport_of((meta or {}).get("league"))
-        short = self.format_short(f0, usd, vwap, pos, fee, hedge_vs, flip_vs, live)
+        short = (self.format_short(f0, usd, vwap, pos, fee, hedge_vs, flip_vs, live)
+                 if self.cfg.compact_tabs else None)
         if not self.muted():
             await self.tg.send_alert(text, sport, short)
             self.alerts_sent += 1

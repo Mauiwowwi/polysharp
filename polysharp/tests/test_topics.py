@@ -199,3 +199,16 @@ async def test_general_copy_is_silent():
     await tg.send_alert("plain", "hockey")
     assert "plain" not in silent
     await tg.close()
+
+
+
+@pytest.mark.asyncio
+async def test_tabs_get_full_alert_by_default(tmp_path):
+    from polysharp.config import Config
+    c = Config()
+    assert c.compact_tabs is False and c.all_feed is False
+    tg, posted = tg_capture(all_feed=c.all_feed)
+    tg.topics = {GROUP: {"hockey": 5}}
+    await tg.send_alert("FULL detailed alert", "hockey", short=None)
+    assert posted == [(GROUP, 5, "FULL detailed alert")]      # one message, full, in the tab
+    await tg.close()

@@ -78,6 +78,8 @@ class Config:
 
     # Group with Topics enabled: alerts go to the sport's tab (+ General if ALL_FEED)
     sport_topics: bool = field(default_factory=lambda: _env("SPORT_TOPICS", True, bool))
+    # Sport tabs get the full detailed alert; COMPACT_TABS=true switches to the 3-line version
+    compact_tabs: bool = field(default_factory=lambda: _env("COMPACT_TABS", False, bool))
     # Off by default: Telegram's own "All" view already merges every tab
     all_feed: bool = field(default_factory=lambda: _env("ALL_FEED", False, bool))
     # General copy posts silently so members only get pinged once (by the sport tab)
