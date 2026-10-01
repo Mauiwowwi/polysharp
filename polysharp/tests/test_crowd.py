@@ -322,13 +322,13 @@ def test_paid_fees_add_conviction_points(tmp_path):
 
 def test_soccer_yes_no_labels():
     from polysharp.watcher import pick_label
-    assert pick_label("Will Athletic Club win on 2026-09-16?", "No") == "Athletic Club NOT to win (draw or loss)"
-    assert pick_label("Will Athletic Club win on 2026-09-16?", "Yes") == "Athletic Club to win"
-    assert pick_label("Will Germany vs. Serbia end in a draw?", "No") == "No draw (Germany or Serbia wins)"
-    assert pick_label("Will Germany vs. Serbia end in a draw?", "Yes") == "Draw (Germany vs Serbia)"
-    assert pick_label("Exact Score: Germany 1 - 1 Serbia?", "No") == "NOT exact score Germany 1-1 Serbia"
-    assert pick_label("Germany vs. Serbia: Both Teams to Score", "Yes") == "Both teams score"
-    assert pick_label("Will Haaland score a goal?", "No") == "NO: Haaland score a goal"
+    assert pick_label("Will Azerbaijan win on 2026-10-01?", "Yes") == "Azerbaijan YES"
+    assert pick_label("Will Norway win on 2026-10-01?", "No") == "Norway NO"
+    assert pick_label("Will Germany vs. Serbia end in a draw?", "No") == "Draw NO (Germany vs Serbia)"
+    assert pick_label("Will Germany vs. Serbia end in a draw?", "Yes") == "Draw YES (Germany vs Serbia)"
+    assert pick_label("Exact Score: Germany 1 - 1 Serbia?", "No") == "Germany 1-1 Serbia NO"
+    assert pick_label("Germany vs. Serbia: Both Teams to Score", "Yes") == "BTTS YES"
+    assert pick_label("Will Haaland score a goal?", "No") == "Haaland score a goal NO"
     # non Yes/No markets untouched
     assert pick_label("Spread: Browns (-3.5)", "Steelers") == "Steelers +3.5"
 
@@ -338,7 +338,7 @@ def test_soccer_no_side_in_alert(tmp_path):
     t = {"wallet": A, "side": "BUY", "title": "Will Athletic Club win on 2026-09-16?", "outcome": "No",
          "event_slug": "lal-ath-lev", "slug": "", "ts": time.time()}
     m = w.format_alert(t, [{}], 13254, 23377, 0.567, None)
-    assert "<b>Athletic Club NOT to win (draw or loss) @ 0.567 (-131)</b>" in m
+    assert "<b>Athletic Club NO @ 0.567 (-131)</b>" in m
 
 
 @pytest.mark.asyncio

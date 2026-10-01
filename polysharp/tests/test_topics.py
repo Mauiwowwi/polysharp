@@ -180,7 +180,7 @@ def test_short_pick_labels():
     assert short_pick("Spread: Browns (-3.5)", "Steelers") == "Steelers +3.5"
     assert short_pick("Steelers vs. Browns: O/U 38.5", "Under") == "Steelers vs. Browns — Under 38.5"
     assert short_pick("Titans vs. Giants", "Giants") == "Giants ML"
-    assert short_pick("Will Athletic Club win on 2026-09-16?", "No") == "Athletic Club NOT to win (draw or loss)"
+    assert short_pick("Will Athletic Club win on 2026-09-16?", "No") == "Athletic Club NO"
 
 
 

@@ -85,33 +85,31 @@ _WILL = re.compile(r"^Will (.+?)\s*\??$", re.I)
 
 
 def yes_no_label(title, yes):
-    """Turn a Yes/No soccer-style market into the actual bet.
+    """Yes/No soccer-style markets as '<subject> YES|NO'.
 
-    Will Athletic Club win?        Yes -> "Athletic Club to win"   No -> "Athletic Club NOT to win (draw or loss)"
-    Will A vs. B end in a draw?    Yes -> "Draw (A vs B)"          No -> "No draw (A or B wins)"
-    Exact Score: A 1 - 1 B?        Yes -> "Exact score A 1-1 B"   No -> "NOT exact score A 1-1 B"
-    anything else                  "YES: <question>" / "NO: <question>"
+    Will Azerbaijan win on …?      -> "Azerbaijan YES" / "Azerbaijan NO"
+    Will A vs. B end in a draw?    -> "Draw YES (A vs B)" / "Draw NO (A vs B)"
+    Exact Score: A 1 - 1 B?        -> "A 1-1 B YES" / "… NO"
+    …Both Teams to Score           -> "BTTS YES" / "BTTS NO"
+    anything else                  -> "<question> YES" / "… NO"
     """
+    side = "YES" if yes else "NO"
     t = (title or "").strip()
     m = _DRAW.match(t)
     if m:
-        a, b = m.group(1).strip(), m.group(2).strip()
-        return f"Draw ({a} vs {b})" if yes else f"No draw ({a} or {b} wins)"
+        return f"Draw {side} ({m.group(1).strip()} vs {m.group(2).strip()})"
     m = _WIN.match(t)
     if m:
-        team = m.group(1).strip()
-        return f"{team} to win" if yes else f"{team} NOT to win (draw or loss)"
+        return f"{m.group(1).strip()} {side}"
     m = _EXACT.match(t)
     if m:
         score = re.sub(r"\s*-\s*", "-", m.group(1).strip())
-        return f"Exact score {score}" if yes else f"NOT exact score {score}"
+        return f"{score} {side}"
     if _BTTS.search(t):
-        return "Both teams score" if yes else "Both teams NOT to score"
+        return f"BTTS {side}"
     m = _WILL.match(t)
     q = m.group(1) if m else t.rstrip("?")
-    return f"{'YES' if yes else 'NO'}: {q}"
-
-
+    return f"{q} {side}"
 def short_pick(title, outcome):
     """Pick label for the compact tab format: totals keep the matchup, moneylines say ML."""
     title, outcome = title or "", (outcome or "").strip()
