@@ -140,7 +140,7 @@ async def test_websocket_feed(tmp_path):
         await asyncio.sleep(0.8)
         task.cancel()
     assert received[0]["subscriptions"][0] == {"topic": "activity", "type": "trades"}
-    assert len(tg.sent) == 1 and "$5,000" in tg.sent[0] and "via ws" in tg.sent[0]
+    assert len(tg.sent) == 1 and "$5,000" in tg.sent[0] and "via ws" not in tg.sent[0]
 
 
 # --- fee / conviction -------------------------------------------------------

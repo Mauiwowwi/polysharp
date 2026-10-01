@@ -11,6 +11,7 @@ that sweeps the book produces one alert, not twenty.
 """
 import asyncio
 import json
+import re
 import logging
 import time
 
@@ -43,6 +44,39 @@ def normalize(raw, source):
         "tx": raw.get("transactionHash") or "", "source": source,
         "fee_info": analyze_fill(size, price, usdc, (raw.get("side") or "").upper()),
     }
+
+
+_SPREAD = re.compile(r"Spread:\s*(.+?)\s*\(([-+]?\d+(?:\.\d+)?)\)", re.I)
+_TOTAL = re.compile(r"O/U\s*(\d+(?:\.\d+)?)", re.I)
+
+
+def pick_label(title, outcome):
+    """The side the bettor actually holds, with its line.
+
+    "Spread: Browns (-3.5)" + Steelers -> "Steelers +3.5"; + Browns -> "Browns -3.5"
+    "...: O/U 39.5" + Under -> "Under 39.5"; moneyline / other -> outcome as-is.
+    """
+    title, outcome = title or "", (outcome or "").strip()
+    m = _SPREAD.search(title)
+    if m:
+        team, line = m.group(1).strip(), float(m.group(2))
+        if outcome.lower() != team.lower() and outcome.lower() not in team.lower() \
+                and team.lower() not in outcome.lower():
+            line = -line
+        return f"{outcome} {line:+g}"
+    m = _TOTAL.search(title)
+    if m and outcome.lower() in ("over", "under"):
+        return f"{outcome} {m.group(1)}"
+    return outcome
+
+
+def american(p):
+    """Polymarket price -> American odds string (0.71 -> -245, 0.40 -> +150)."""
+    if not 0 < p < 1:
+        return "n/a"
+    if p >= 0.5:
+        return f"-{round(100 * p / (1 - p))}"
+    return f"+{round(100 * (1 - p) / p)}"
 
 
 class Watcher:
@@ -347,38 +381,16 @@ class Watcher:
             elif mins >= 0:
                 when = f" · ⏳ starts in {int(mins // 60)}h {int(mins % 60):02d}m"
         league = f"[{meta['league'].upper()}] " if meta and meta.get("league") else ""
-        lines = [
-            f"<b>{head}</b>",
-            f"{league}<a href=\"{link}\">{esc(t['title'])}</a>{when}",
-            f"➡️ <b>{esc(t['outcome'])}</b> @ {vwap:.3f}  ({shares:,.0f} sh"
-            + (f", {len(fills)} fills)" if len(fills) > 1 else ")"),
-            self._wallet_line(t["wallet"]),
-        ]
-        if score:
-            lines.append(f"🎯 Conviction {score['pts']:+d}: " + " · ".join(score["why"]))
-        if hedge_vs:
-            for h in hedge_vs:
-                lines.append(f"🛡️ Already holds <b>{esc(h['outcome'])}</b> {h['size']:,.0f} sh "
-                             f"@ {h['avg']:.3f} (cost ${h['cost']:,.0f})")
-            if pos:
-                total_cost = pos["cost"] + sum(h["cost"] for h in hedge_vs)
-                outs = [f"{esc(t['outcome'])} wins {pos['size'] - total_cost:+,.0f}"]
-                outs += [f"{esc(h['outcome'])} wins {h['size'] - total_cost:+,.0f}" for h in hedge_vs]
-                lines.append("📐 Net after hedge: " + " · ".join(outs))
-        elif t["side"] == "SELL":
-            if pos is not None and pos["size"] >= 1:
-                lines.append(f"📦 Still holds {pos['size']:,.0f} sh · avg {pos['avg']:.3f}")
-            if tailed:
-                lines.append("↩️ Getting off a position we alerted you on")
-        elif pos and pos["size"] >= 1:
-            lines.append(f"📦 Now holds {pos['size']:,.0f} sh · avg {pos['avg']:.3f} "
-                         f"· cost ${pos['cost']:,.0f}")
-        for a in agree:
-            lines.append(f"🤝 {self._name(a['wallet'])} also on {esc(a['outcome'] or t['outcome'])}: "
-                         f"{a['size']:,.0f} sh @ {a['avg']:.3f} (${a['cost']:,.0f})")
-        for o in oppose:
-            lines.append(f"⚔️ {self._name(o['wallet'])} is on <b>{esc(o['outcome'])}</b>: "
-                         f"{o['size']:,.0f} sh @ {o['avg']:.3f} (${o['cost']:,.0f})")
+        pick = pick_label(t["title"], t["outcome"])
+
+        # 1. who
+        lines = [f"<b>{head}</b>", self._wallet_line(t["wallet"]), ""]
+        # 2. what
+        lines.append(f"{league}<a href=\"{link}\">{esc(t['title'])}</a>{when}")
+        lines.append(f"➡️ <b>{esc(pick)} @ {vwap:.3f} ({american(vwap)})</b> ({shares:,.0f} sh"
+                     + (f", {len(fills)} fills)" if len(fills) > 1 else ")"))
+        lines.append("")
+        # 3. why
         if fee and t["side"] == "BUY":
             base = (self.wallets.get(t["wallet"], {}).get("stats") or {}).get("taker_share")
             base_txt = f" · usually {base:.0%} taker" if base is not None else ""
@@ -387,8 +399,37 @@ class Watcher:
                              f"({fee['fee_pct']:.2%} of stake){base_txt}")
             else:
                 lines.append(f"🧱 MAKER — resting limit, no fees{base_txt}")
-        lag = time.time() - t["ts"]
-        lines.append(f"⏱ {lag:.0f}s after fill · via {t['source']}")
+        if score:
+            lines.append(f"🎯 Conviction {score['pts']:+d}: " + " · ".join(score["why"]))
+        for a in agree:
+            lines.append(f"🤝 {self._name(a['wallet'])} also on "
+                         f"{esc(pick_label(t['title'], a['outcome'] or t['outcome']))}: "
+                         f"{a['size']:,.0f} sh @ {a['avg']:.3f} ({american(a['avg'])}) · ${a['cost']:,.0f}")
+        for o in oppose:
+            lines.append(f"⚔️ {self._name(o['wallet'])} is on "
+                         f"<b>{esc(pick_label(t['title'], o['outcome']))}</b>: "
+                         f"{o['size']:,.0f} sh @ {o['avg']:.3f} ({american(o['avg'])}) · ${o['cost']:,.0f}")
+        if hedge_vs:
+            for h in hedge_vs:
+                lines.append(f"🛡️ Already holds <b>{esc(pick_label(t['title'], h['outcome']))}</b> "
+                             f"{h['size']:,.0f} sh @ {h['avg']:.3f} ({american(h['avg'])}) · ${h['cost']:,.0f}")
+            if pos:
+                total_cost = pos["cost"] + sum(h["cost"] for h in hedge_vs)
+                outs = [f"{esc(pick)} wins {pos['size'] - total_cost:+,.0f}"]
+                outs += [f"{esc(pick_label(t['title'], h['outcome']))} wins "
+                         f"{h['size'] - total_cost:+,.0f}" for h in hedge_vs]
+                lines.append("📐 Net after hedge: " + " · ".join(outs))
+        if t["side"] == "SELL" and tailed:
+            lines.append("↩️ Getting off a position we alerted you on")
+        # 4. where they stand now (bottom)
+        if pos is not None and t["side"] == "SELL":
+            lines.append(f"📦 Still holds {pos['size']:,.0f} sh · avg {pos['avg']:.3f}"
+                         if pos["size"] >= 1 else "📦 Fully out")
+        elif pos and pos["size"] >= 1:
+            lines.append(f"📦 Now holds {pos['size']:,.0f} sh · avg {pos['avg']:.3f} "
+                         f"({american(pos['avg'])}) · cost ${pos['cost']:,.0f}")
+        while lines and lines[-1] == "":
+            lines.pop()
         return "\n".join(lines)
 
     async def _consensus(self, t, agree):
@@ -403,7 +444,7 @@ class Watcher:
         link = f"https://polymarket.com/event/{t['event_slug'] or t['slug']}"
         text = (f"🔥 <b>CONSENSUS · {n} of your wallets on the same side</b>\n"
                 f"<a href=\"{link}\">{esc(t['title'])}</a>\n"
-                f"➡️ <b>{esc(t['outcome'])}</b>\n"
+                f"➡️ <b>{esc(pick_label(t['title'], t['outcome']))}</b>\n"
                 f"  • {self._name(t['wallet'])} (just now)\n{who}\n"
                 f"Others hold ${total:,.0f} combined")
         if not self.muted():

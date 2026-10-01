@@ -223,3 +223,32 @@ def test_win_sample_aligns_windows():
             {"asset": "z", "curPrice": 1, "endDate": iso(NOW - 3600)}]          # a winner
     r = win_sample(closed, dead)
     assert r["win_n"] == 11 and abs(r["win_rate"] - 6 / 11) < 1e-4 and r["win_days"] == 1.0
+
+
+def test_pick_label_and_american_odds():
+    from polysharp.watcher import american, pick_label
+    assert pick_label("Spread: Browns (-3.5)", "Steelers") == "Steelers +3.5"
+    assert pick_label("Spread: Browns (-3.5)", "Browns") == "Browns -3.5"
+    assert pick_label("Eagles vs. Titans: O/U 39.5", "Under") == "Under 39.5"
+    assert pick_label("Dodgers vs. Padres", "Dodgers") == "Dodgers"
+    assert american(0.71) == "-245" and american(0.40) == "+150" and american(0.5) == "-100"
+
+
+@pytest.mark.asyncio
+async def test_alert_layout_order(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    w.wallets[A]["name"] = "HomeRunHazard"
+    api.hold(A, PRE, YES, "Steelers", 25980, 0.71)
+
+    def spread_fill():
+        f = fill(A, PRE, YES, "Steelers", 13004, 0.71, "0xs")
+        f["title"] = "Spread: Browns (-3.5)"
+        return f
+    await w.ingest(spread_fill())
+    await flush()
+    lines = tg.sent[0].split("\n")
+    assert "HomeRunHazard" in lines[1] and lines[2] == ""                 # who, right under header
+    assert "Spread: Browns (-3.5)" in lines[3]                             # market
+    assert "<b>Steelers +3.5 @ 0.710 (-245)</b> (13,004 sh)" in lines[4]   # the actual pick
+    assert lines[-1].startswith("📦 Now holds 25,980 sh")                  # holdings last
+    assert not any("after fill" in x for x in lines)
