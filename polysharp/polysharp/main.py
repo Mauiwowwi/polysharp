@@ -525,9 +525,9 @@ class App:
     ADMIN_ONLY = {"add", "remove", "skip", "suggest", "refresh", "min", "tier",
                   "takeronly", "livehedges", "mute", "unmute"}
 
-    def _wallet_buttons(self):
+    def _wallet_buttons(self, prefix="top"):
         names = sorted(self.watcher.wallets.items(), key=lambda kv: (kv[1].get("name") or kv[0]).lower())
-        btns = [(w.get("name") or a[:10], f"top:{a}") for a, w in names]
+        btns = [(w.get("name") or a[:10], f"{prefix}:{a}") for a, w in names]
         return [btns[i:i + 2] for i in range(0, len(btns), 2)]
 
     # -------------------------------------------------------------------- run

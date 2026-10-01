@@ -292,3 +292,26 @@ def test_money_format_on_wallet_line(tmp_path):
     w.wallets[A]["stats"] = {"pnl_m": 1116000, "pnl_all": 447000, "pnl_overall": 447000}
     line = w._wallet_line(A)
     assert "1M +$1.12M" in line and "all +$447K" in line
+
+
+def test_paid_fees_lead_the_header(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    w.wallets[A]["name"] = "HomeRunHazard"
+    t = {"wallet": A, "side": "BUY", "title": "KK Crvena Zvezda vs. Anadolu Efes", "outcome": "KK Crvena Zvezda",
+         "event_slug": "euroleague-x", "slug": "", "ts": time.time()}
+    paid = {"taker_share": 1.0, "fees": 39.89, "fee_pct": 0.0215, "coverage": 1.0}
+    maker = {"taker_share": 0.0, "fees": 0.0, "fee_pct": 0.0, "coverage": 1.0}
+    m1 = w.format_alert(t, [{}], 1895, 3255, 0.57, None, paid)
+    m2 = w.format_alert(t, [{}], 1895, 3255, 0.57, None, maker)
+    assert m1.startswith("<b>💸 PAID $40 · 🟢 ADD BUY · $1,895</b>") and "<b>TAKER 100%</b>" in m1
+    assert m2.startswith("<b>🟢 ADD BUY · $1,895</b>") and "🧱 MAKER" in m2
+
+
+def test_paid_fees_add_conviction_points(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    t = {"wallet": A, "asset": YES}
+    base = w.conviction_score(t, 1000, None, False, [], [])
+    paid = w.conviction_score(t, 1000, None, False, [], [], paid=True)
+    ooc = w.conviction_score(t, 1000, None, True, [], [], paid=True)
+    assert paid["pts"] == base["pts"] + 1 and "paid fees" in paid["why"]
+    assert ooc["pts"] == base["pts"] + 2 and "out of character" in ooc["why"]

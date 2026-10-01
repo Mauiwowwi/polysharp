@@ -50,6 +50,11 @@ _SPREAD = re.compile(r"Spread:\s*(.+?)\s*\(([-+]?\d+(?:\.\d+)?)\)", re.I)
 _TOTAL = re.compile(r"O/U\s*(\d+(?:\.\d+)?)", re.I)
 
 
+def is_paid(fee):
+    """True when at least half the bundle crossed the spread (they paid fees to get filled now)."""
+    return bool(fee) and fee.get("coverage", 1) >= 0.5 and fee.get("taker_share", 0) >= 0.5
+
+
 def pick_label(title, outcome):
     """The side the bettor actually holds, with its line.
 
@@ -206,7 +211,7 @@ class Watcher:
         usd = sum(f["usd"] for f in fills)
         score = None
         if side == "BUY" and not is_hedge:
-            score = self.conviction_score(f0, usd, pos, conviction, agree, oppose)
+            score = self.conviction_score(f0, usd, pos, conviction, agree, oppose, paid=is_paid(fee))
             if self.tier_rank(score["tier"]) < self.tier_rank(self.store.get("min_tier", "all")):
                 self.below_tier += 1
                 if self.cfg.consensus_alert_wallets <= len(agree) + 1:
@@ -314,14 +319,15 @@ class Watcher:
     def tier_rank(tier):
         return {"all": 0, "low": 0, "LOW": 0, "med": 1, "MED": 1, "high": 2, "HIGH": 2}.get(tier, 0)
 
-    def conviction_score(self, t, usd, pos, paid_up, agree, oppose):
+    def conviction_score(self, t, usd, pos, paid_up, agree, oppose, paid=False):
         """Points for how hard this wallet is leaning in, and what the others are doing.
 
         size vs their normal bet  ≥3× +2 · ≥1.5× +1   ("volumed out")
         still buying              ≥2 separate buys on this side in 24h +1
         agreement                 +1 per tracked wallet on the same side (max +2)
         opposition                −2 if any tracked wallet holds the other side
-        paid to cross             +1 (out-of-character taker fill)
+        paid fees                 +1 (≥50% of the buy crossed the spread)
+        out of character          +1 more if this wallet is normally a passive maker
         """
         stats = self.wallets.get(t["wallet"], {}).get("stats") or {}
         avg = stats.get("avg_bet") or 0
@@ -347,9 +353,12 @@ class Watcher:
             why.append(f"{len(oppose)} oppose")
         else:
             why.append("no opposition")
+        if paid or paid_up:
+            pts += 1
+            why.append("paid fees")
         if paid_up:
             pts += 1
-            why.append("paid to cross")
+            why.append("out of character")
         tier = "HIGH" if pts >= self.cfg.tier_high else "MED" if pts >= self.cfg.tier_med else "LOW"
         return {"pts": pts, "tier": tier, "why": why, "mult": mult}
 
@@ -391,6 +400,8 @@ class Watcher:
             tag = {"HIGH": "🔥 HIGH", "MED": "⭐ MED", "LOW": "▫️ LOW"}[score["tier"]] + " · " + tag
         verb = "BUY" if t["side"] == "BUY" else "SELL"
         head = f"{tag} {verb} · ${usd:,.0f}"
+        if t["side"] == "BUY" and is_paid(fee):
+            head = f"💸 PAID ${fee['fees']:,.0f} · " + head
         if t["side"] == "BUY" and agree:
             head += f" · 🤝 AGREES ×{len(agree)}"
         if t["side"] == "BUY" and oppose:
@@ -419,7 +430,7 @@ class Watcher:
             base = (self.wallets.get(t["wallet"], {}).get("stats") or {}).get("taker_share")
             base_txt = f" · usually {base:.0%} taker" if base is not None else ""
             if fee["taker_share"] >= 0.01:
-                lines.append(f"💸 TAKER {fee['taker_share']:.0%} · paid ${fee['fees']:,.2f} fees "
+                lines.append(f"💸 <b>TAKER {fee['taker_share']:.0%}</b> · paid ${fee['fees']:,.2f} fees "
                              f"({fee['fee_pct']:.2%} of stake){base_txt}")
             else:
                 lines.append(f"🧱 MAKER — resting limit, no fees{base_txt}")

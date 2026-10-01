@@ -46,7 +46,8 @@ The same message ends with a health check on **your list**, flagging anyone who 
 | Still buying: 2nd+ separate buy on this side in 24h | +1 |
 | Each tracked wallet already on the same side (max 2) | +1 |
 | Any tracked wallet on the other side | −2 |
-| Paid to cross the spread, out of character | +1 |
+| Paid fees (≥50% of the buy crossed the spread) | +1 |
+| …and that's out of character for a normally passive wallet | +1 more |
 
 HIGH is ≥4 and MED is ≥2 (`TIER_HIGH`, `TIER_MED`). `/tier high` shows only HIGH buys; sells, exits, hedges and 🔥 CONSENSUS always come through.
 
@@ -68,6 +69,7 @@ Polymarket only charges **takers**: `fee = contracts × rate × p × (1−p)`, i
 
 Checked on live rows: taker fills back out to exactly 0.030, and maker fills to exactly 0.
 
+- Buys where they paid fees lead with **💸 PAID $y** in the header, ahead of everything else. Passive limit-order buys don't get the tag.
 - Every alert shows `💸 TAKER x% · paid $y fees` or `🧱 MAKER`, next to that wallet's usual taker share (measured from its last 500 trades at selection).
 - **⚡ CONVICTION** is added when a bundle is ≥80% taker from a wallet that is normally ≤40% taker. That's a patient limit-order trader suddenly paying up to get filled now.
 - `/takeronly on` mutes everything except bundles where they paid to cross.
