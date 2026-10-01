@@ -6,13 +6,19 @@ Telegram alerts when proven-profitable Polymarket wallets take positions, in nea
 
 **Your feed is manual.** Alerts only fire for wallets you `/add`. Remove them with `/remove`. The address is on each Polymarket profile.
 
-**Morning shortlist (08:00 America/Halifax by default).** The bot scans the Polymarket **sports** leaderboards (Week/Month/All-time, by P&L and by volume, top 300 each) and sends you a ranked list of wallets worth a look, each with a tap-to-copy `/add` command. Every metric is computed on **sports positions only**:
+**Morning shortlist (08:00 America/Halifax by default).** The bot scans the Polymarket **sports** leaderboards (Week/Month/All-time, by P&L and by volume, top 300 each) and sends you a ranked list of wallets worth a look, each with a tap-to-copy `/add` command.
 
-- ≥100 settled sports bets and ≥$500K staked, including resolved-but-unredeemed losers, which Polymarket's own stats hide.
-- Sports ROI ≥2% (ranked by ROI × √bets).
-- ≥80% of recent buying in sports markets, which drops politics, war and crypto accounts.
-- ≤25% of recent sports buying placed **after the game started**, which drops live traders.
+Performance uses **Polymarket's own sports P&L and volume**, the same numbers as the profile page, for 1W, 1M and all-time:
+- Sports P&L positive this month and ≥$25K all-time.
+- ≥$250K sports volume this month.
+- Margin (P&L ÷ volume) ≥0.2% all-time, which drops break-even market makers.
+
+Style checks come from their last 500 fills:
+- ≥80% of buying in sports markets, which drops politics, war and crypto accounts.
+- ≤25% of sports buying placed **after the game started**, which drops live traders.
 - A bet within the last 7 days.
+
+Ranked by last-month sports P&L. (Earlier versions rebuilt ROI from position samples. That broke on high-frequency accounts, whose latest 500 settled bets can cover a single day, while their unredeemed losers go back months.)
 
 The same message ends with a health check on **your list**, flagging anyone who went cold, turned live-heavy or drifted out of sports.
 
@@ -64,9 +70,10 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 |---|---|---|
 | `SUGGEST_TIME` / `BOT_TZ` | `08:00` / `America/Halifax` | when the shortlist arrives |
 | `SUGGEST_COUNT` | 8 | max wallets per shortlist |
-| `SUGGEST_MIN_BETS` | 100 | settled sports bets |
-| `SUGGEST_MIN_STAKED` | 500000 | $ staked on sports |
-| `SUGGEST_MIN_ROI` | 0.02 | sports ROI |
+| `SUGGEST_MIN_MONTH_VOL` | 250000 | sports volume this month |
+| `SUGGEST_MIN_MONTH_PNL` | 0 | sports P&L this month |
+| `SUGGEST_MIN_PNL` | 25000 | all-time sports P&L |
+| `SUGGEST_MIN_MARGIN` | 0.002 | all-time P&L ÷ volume |
 | `SUGGEST_MAX_LIVE_SHARE` | 0.25 | max share of sports $ bet in-game |
 | `SUGGEST_MIN_SPORTS_SHARE` | 0.8 | min share of $ in sports |
 | `SUGGEST_MAX_DAYS_INACTIVE` | 7 | days since last bet |

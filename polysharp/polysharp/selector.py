@@ -1,19 +1,22 @@
-"""Find sports sharps worth a look: leaderboard -> cheap screen -> deep sports/live check.
+"""Find sports sharps worth a look: leaderboard -> recency screen -> deep check.
 
 Nothing here adds wallets to the feed. It produces a ranked shortlist for the
 morning message; Colin decides who gets /add-ed.
 
-Deep check (per wallet, SPORTS positions only):
-  * settled bets, $ staked, ROI, win rate, realised P&L -- from closed positions
-    PLUS resolved-but-unredeemed losers (which never show as "closed")
+Performance comes straight from Polymarket's own sports P&L / volume (the same
+numbers as the profile page), for 1W / 1M / All-time. We do NOT rebuild P&L from
+position samples any more: for high-frequency accounts the latest 500 settled
+bets cover ~a day while unredeemed losers go back months, which produced
+nonsense (e.g. -46% ROI on a +$1.7M sports winner).
+
+Style checks still come from their recent fills:
   * sports_share: $ of recent buys in sports markets (drops politics/war/crypto)
   * live_share:   $ of recent sports-game buys placed after the game started
   * days since last trade, top leagues, taker share
-Score = ROI * sqrt(settled bets): real margin over many bets beats one hot streak.
+Ranked by last-month sports P&L.
 """
 import asyncio
 import logging
-import math
 import time
 from collections import Counter
 
@@ -21,43 +24,6 @@ from .fees import taker_baseline
 from .markets import is_live
 
 log = logging.getLogger(__name__)
-
-
-def score_history(closed, dead_positions, now=None):
-    """Return stats dict from closed positions + unredeemed losers."""
-    now = now or time.time()
-    pnl = cost = 0.0
-    wins = n = 0
-    last_ts = 0
-    for p in closed:
-        c = float(p.get("totalBought") or 0) * float(p.get("avgPrice") or 0)
-        r = float(p.get("realizedPnl") or 0)
-        if c <= 0:
-            continue
-        n += 1
-        cost += c
-        pnl += r
-        wins += r > 0
-        last_ts = max(last_ts, int(p.get("timestamp") or 0))
-    for p in dead_positions:
-        # resolved against them, never redeemed -> full loss of initial value
-        if float(p.get("curPrice") or 0) > 0:
-            continue
-        c = float(p.get("initialValue") or 0)
-        if c <= 0:
-            continue
-        n += 1
-        cost += c
-        pnl -= c
-    win_rate = wins / n if n else 0.0
-    roi = pnl / cost if cost else 0.0
-    return {
-        "n": n, "wins": wins, "win_rate": round(win_rate, 4), "roi": round(roi, 4),
-        "pnl": round(pnl, 2), "cost": round(cost, 2),
-        "score": round(roi * math.sqrt(n), 4) if n else 0.0,
-        "last_ts": last_ts,
-        "days_inactive": round((now - last_ts) / 86400, 1) if last_ts else None,
-    }
 
 
 def trade_profile(acts, meta, now=None):
@@ -103,16 +69,17 @@ def passes(s, cfg):
         reasons.append(f"sports {s.get('sports_share') or 0:.0%}")
     if s.get("live_share", 0) > cfg.max_live_share:
         reasons.append(f"live {s['live_share']:.0%}")
-    if s["n"] < cfg.min_closed:
-        reasons.append(f"n={s['n']}")
-    if s["cost"] < cfg.min_staked:
-        reasons.append(f"staked ${s['cost'] / 1e3:,.0f}K")
-    if s["roi"] < cfg.min_roi:
-        reasons.append(f"ROI {s['roi']:+.1%}")
-    if s["win_rate"] < cfg.min_win_rate:
-        reasons.append(f"win {s['win_rate']:.0%}")
-    if s["pnl"] < cfg.min_realized_pnl:
-        reasons.append(f"P&L ${s['pnl']:,.0f}")
+    if "pnl_m" not in s:
+        reasons.append("no P&L data")
+        return False, reasons
+    if s["vol_m"] < cfg.min_month_vol:
+        reasons.append(f"1M vol ${s['vol_m'] / 1e3:,.0f}K")
+    if s["pnl_m"] < cfg.min_month_pnl:
+        reasons.append(f"1M P&L ${s['pnl_m']:,.0f}")
+    if s["pnl_all"] < cfg.min_realized_pnl:
+        reasons.append(f"all-time P&L ${s['pnl_all']:,.0f}")
+    if s["margin_all"] < cfg.min_margin:
+        reasons.append(f"margin {s['margin_all']:.2%}")
     return not reasons, reasons
 
 
@@ -124,29 +91,33 @@ def fail_bucket(reasons):
         return "not sports"
     if r.startswith("live"):
         return "live bettor"
-    return "volume/ROI"
+    return "P&L/volume"
 
 
-async def fetch_raw(api, cfg, address):
-    closed, dead, acts = await asyncio.gather(
-        api.closed_positions(address, cfg.history_positions),
-        api.positions(address, redeemable=True),
-        api.activity(address, limit=500))
-    return {"closed": closed, "dead": dead, "acts": acts}
+async def fetch_perf(api, address):
+    w, m, a = await asyncio.gather(*(api.user_pnl(address, p, "SPORTS")
+                                     for p in ("WEEK", "MONTH", "ALL")))
+    return {
+        "pnl_w": round(w["pnl"], 2), "pnl_m": round(m["pnl"], 2), "pnl_all": round(a["pnl"], 2),
+        "vol_w": round(w["vol"], 2), "vol_m": round(m["vol"], 2), "vol_all": round(a["vol"], 2),
+        "margin_m": round(m["pnl"] / m["vol"], 5) if m["vol"] else 0.0,
+        "margin_all": round(a["pnl"] / a["vol"], 5) if a["vol"] else 0.0,
+        "rank_m": m["rank"], "rank_all": a["rank"],
+        "score": round(m["pnl"], 2),
+    }
 
 
-async def deep_eval(api, markets, cfg, address, raw=None):
-    raw = raw or await fetch_raw(api, cfg, address)
+async def deep_eval(api, markets, cfg, address, acts=None):
+    acts = acts if acts is not None else await api.activity(address, limit=500)
     slugs = {}
-    for row in raw["closed"] + raw["dead"] + raw["acts"]:
+    for row in acts:
         cid = row.get("conditionId")
         if cid:
             slugs.setdefault(cid, row.get("eventSlug") or row.get("slug") or "")
-    meta = await markets.get(slugs)
-    sp = lambda r: (meta.get(r.get("conditionId")) or {}).get("sports")  # noqa: E731
-    stats = score_history([r for r in raw["closed"] if sp(r)], [r for r in raw["dead"] if sp(r)])
-    stats.update(trade_profile(raw["acts"], meta))
-    tb = taker_baseline(raw["acts"])
+    meta, perf = await asyncio.gather(markets.get(slugs), fetch_perf(api, address))
+    stats = dict(perf)
+    stats.update(trade_profile(acts, meta))
+    tb = taker_baseline(acts)
     stats["taker_share"], stats["taker_sample"] = tb["taker_share"], tb["sample"]
     return stats
 
@@ -181,17 +152,6 @@ async def gather_candidates(api, cfg, errors=None):
     return cands
 
 
-def _cheap_ok(raw, cfg):
-    """Fast screen before any market lookups: recent activity + enough overall size."""
-    last = max((int(a.get("timestamp") or 0) for a in raw["acts"]), default=0)
-    if not last or (time.time() - last) / 86400 > cfg.max_days_inactive:
-        return False, "inactive"
-    s = score_history(raw["closed"], raw["dead"])
-    if s["n"] < cfg.min_closed * 0.6 or s["cost"] < cfg.min_staked * 0.6:
-        return False, "volume/ROI"
-    return True, ""
-
-
 async def suggest(api, markets, cfg, exclude=frozenset()):
     errors = []
     cands = await gather_candidates(api, cfg, errors)
@@ -199,7 +159,7 @@ async def suggest(api, markets, cfg, exclude=frozenset()):
     pool = [c for a, c in cands.items() if a not in exclude and c["lb_vol"] >= cfg.min_lb_vol]
     fails = Counter()
     fails["already tracked/skipped"] = sum(1 for a in cands if a in exclude)
-    fails["volume/ROI"] += total - len(pool) - fails["already tracked/skipped"]
+    fails["P&L/volume"] += total - len(pool) - fails["already tracked/skipped"]
     log.info("Suggest: screening %d of %d leaderboard wallets", len(pool), total)
 
     async def one(c):
@@ -209,15 +169,7 @@ async def suggest(api, markets, cfg, exclude=frozenset()):
             if not last or (time.time() - last) / 86400 > cfg.max_days_inactive:
                 fails["inactive"] += 1
                 return None
-            closed, dead = await asyncio.gather(
-                api.closed_positions(c["address"], cfg.history_positions),
-                api.positions(c["address"], redeemable=True))
-            raw = {"closed": closed, "dead": dead, "acts": acts}
-            ok, why = _cheap_ok(raw, cfg)
-            if not ok:
-                fails[why] += 1
-                return None
-            c["stats"] = await deep_eval(api, markets, cfg, c["address"], raw)
+            c["stats"] = await deep_eval(api, markets, cfg, c["address"], acts)
             ok, reasons = passes(c["stats"], cfg)
             if not ok:
                 fails[fail_bucket(reasons)] += 1

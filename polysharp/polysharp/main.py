@@ -12,7 +12,7 @@ import websockets
 from .api import PolyAPI
 from .config import Config
 from .markets import Markets
-from .selector import deep_eval, fetch_raw, passes, suggest
+from .selector import deep_eval, passes, suggest
 from .store import Store
 from .telegram import Telegram, esc
 from .watcher import Watcher
@@ -47,23 +47,36 @@ def profile_link(addr, name):
     return f"<a href=\"https://polymarket.com/profile/{addr}\">{esc(name or addr[:10])}</a>"
 
 
+def money(x):
+    sign = "+" if x >= 0 else "−"
+    x = abs(x)
+    if x >= 1e6:
+        return f"{sign}${x / 1e6:,.2f}M"
+    if x >= 1e3:
+        return f"{sign}${x / 1e3:,.0f}K"
+    return f"{sign}${x:,.0f}"
+
+
 def stat_lines(s):
-    """Two compact lines of sports stats (empty list if we have none)."""
-    if not s or not s.get("n"):
+    """Compact stat lines from Polymarket's own sports P&L + recent-fill style checks."""
+    if not s or "pnl_m" not in s:
         return []
-    l1 = (f"ROI {s['roi']:+.1%} · ${s['cost'] / 1e6:,.2f}M staked · {s['n']} bets · "
-          f"win {s['win_rate']:.0%} · P&L ${s['pnl']:,.0f}")
+    out = [f"Sports P&L: 1W {money(s['pnl_w'])} · 1M {money(s['pnl_m'])} · All {money(s['pnl_all'])}",
+           f"1M volume ${s['vol_m'] / 1e6:,.1f}M · margin {s['margin_m']:.2%} "
+           f"(all-time {s['margin_all']:.2%})"]
     bits = []
     if s.get("days_since_trade") is not None:
         bits.append(f"last bet {s['days_since_trade']:.1f}d ago")
-    if s.get("live_share") is not None and s.get("sports_share") is not None:
-        bits.append(f"pre-game {1 - s['live_share']:.0%}")
+    if s.get("sports_share") is not None:
+        bits.append(f"pre-game {1 - s.get('live_share', 0):.0%}")
         bits.append(f"sports {s['sports_share']:.0%}")
     if s.get("taker_share") is not None:
         bits.append(f"{s['taker_share']:.0%} taker")
     if s.get("leagues"):
         bits.append("/".join(s["leagues"]))
-    return [l1, " · ".join(bits)] if bits else [l1]
+    if bits:
+        out.append(" · ".join(bits))
+    return out
 
 
 def fmt_wallet(addr, w):
@@ -108,9 +121,9 @@ class App:
 
     # ------------------------------------------------------------ evaluation
     async def evaluate(self, addr):
-        raw = await fetch_raw(self.api, self.cfg, addr)
-        stats = await deep_eval(self.api, self.markets, self.cfg, addr, raw)
-        name = next((a.get("name") or a.get("pseudonym") for a in raw["acts"]
+        acts = await self.api.activity(addr, limit=500)
+        stats = await deep_eval(self.api, self.markets, self.cfg, addr, acts)
+        name = next((a.get("name") or a.get("pseudonym") for a in acts
                      if a.get("name") or a.get("pseudonym")), None)
         return stats, name
 
@@ -166,17 +179,18 @@ class App:
         if f:
             out.append("\n<i>Filtered out: " + ", ".join(
                 f"{v} {k}" for k, v in sorted(f.items(), key=lambda kv: -kv[1]) if v) + "</i>")
-        out.append(f"<i>Bar: ≥{cfg.min_closed} sports bets, ≥${cfg.min_staked / 1e3:,.0f}K staked, "
-                   f"ROI ≥{cfg.min_roi:.0%}, ≥{cfg.min_sports_share:.0%} sports, "
+        out.append(f"<i>Bar: sports P&L positive this month and ≥{money(cfg.min_realized_pnl)} all-time, "
+                   f"≥${cfg.min_month_vol / 1e3:,.0f}K monthly volume, margin ≥{cfg.min_margin:.1%}, "
+                   f"≥{cfg.min_sports_share:.0%} sports, "
                    f"≤{cfg.max_live_share:.0%} live, bet in last {cfg.max_days_inactive:g}d</i>")
         out.append("Not interested? <code>/skip 0x…</code> hides one for 30 days.")
         if health:
             out.append("\n<b>Your list</b>")
             for addr, name, s in health:
-                _, why = passes(s, cfg) if s.get("n") is not None else (False, ["no data"])
-                flags = [r for r in why if r.startswith(("cold", "inactive", "live", "sports"))]
+                _, why = passes(s, cfg)
+                flags = [r for r in why if r.startswith(("cold", "inactive", "live", "sports", "1M P&L"))]
                 icon = "⚠️" if flags else "✅"
-                bits = [f"ROI {s['roi']:+.1%}"] if s.get("n") else []
+                bits = [f"1M {money(s['pnl_m'])}"] if "pnl_m" in s else []
                 if s.get("days_since_trade") is not None:
                     bits.append(f"last bet {s['days_since_trade']:.1f}d")
                 if s.get("live_share") is not None:

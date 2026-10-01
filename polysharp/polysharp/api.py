@@ -48,6 +48,14 @@ class PolyAPI:
             "timePeriod": period, "category": category, "orderBy": order,
             "limit": limit, "offset": offset}) or []
 
+    async def user_pnl(self, user, period="MONTH", category="SPORTS"):
+        """Polymarket's own P&L + volume for one wallet (what the profile page shows)."""
+        rows = await self._get("/v1/leaderboard", {
+            "timePeriod": period, "category": category, "user": user}) or []
+        r = rows[0] if rows else {}
+        return {"pnl": float(r.get("pnl") or 0), "vol": float(r.get("vol") or 0),
+                "rank": int(r.get("rank") or 0) if r else None}
+
     async def closed_positions(self, user, max_rows=500):
         out, offset = [], 0
         while len(out) < max_rows:

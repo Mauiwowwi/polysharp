@@ -255,9 +255,11 @@ class Watcher:
         w = self.wallets.get(addr, {})
         s = w.get("stats") or {}
         bits = [f"👤 <a href=\"https://polymarket.com/profile/{addr}\">{self._name(addr)}</a>"]
-        if s.get("n"):
-            bits.append(f"ROI {s['roi']:+.1%} · ${s.get('cost', 0) / 1e6:,.1f}M staked · "
-                        f"n={s['n']} · win {s['win_rate']:.0%}")
+        if "pnl_m" in s:
+            def m(x):
+                return f"{'+' if x >= 0 else '−'}${abs(x) / 1e3:,.0f}K"
+            bits.append(f"sports 1M {m(s['pnl_m'])} · all {m(s['pnl_all'])} · "
+                        f"margin {s['margin_all']:.2%}")
         return " · ".join(bits)
 
     def format_alert(self, t, fills, usd, shares, vwap, pos, fee=None, conviction=False, meta=None,

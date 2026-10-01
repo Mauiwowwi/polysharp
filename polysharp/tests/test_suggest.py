@@ -82,6 +82,21 @@ class FakeAPI:
                 for i, (a, n) in enumerate([(SHARP, "sharp"), (LIVE, "liveguy"), (WAR, "denizz"),
                                             (COLD, "coldguy"), (SMALL, "btystu"), (TRACKED, "mine")])]
 
+    PERF = {  # (pnl_w, pnl_m, pnl_all, vol_m, vol_all)
+        SHARP: (40e3, 120e3, 900e3, 8e6, 60e6),
+        LIVE: (40e3, 120e3, 900e3, 8e6, 60e6),
+        WAR: (40e3, 120e3, 900e3, 8e6, 60e6),
+        COLD: (0, 120e3, 900e3, 8e6, 60e6),
+        SMALL: (5e3, 20e3, 155e3, 150e3, 362e3),     # btystu: tiny volume
+        TRACKED: (40e3, 120e3, 900e3, 8e6, 60e6),
+    }
+
+    async def user_pnl(self, user, period="MONTH", category="SPORTS"):
+        w, m, a, vm, va = self.PERF[user]
+        pnl = {"WEEK": w, "MONTH": m, "ALL": a}[period]
+        vol = {"WEEK": vm / 4, "MONTH": vm, "ALL": va}[period]
+        return {"pnl": pnl, "vol": vol, "rank": 10}
+
     async def closed_positions(self, user, max_rows=500):
         return self.data[user][0]
 
@@ -137,11 +152,12 @@ async def test_suggest_keeps_only_active_pregame_sports_volume(tmp_path):
     picks, summary = await suggest(api, Markets(api, st), c, exclude={TRACKED})
     assert [p["address"] for p in picks] == [SHARP]
     s = picks[0]["stats"]
-    assert s["sports_share"] == 1.0 and s["live_share"] == 0.0 and s["n"] == 220
+    assert s["sports_share"] == 1.0 and s["live_share"] == 0.0
+    assert s["pnl_m"] == 120e3 and s["margin_all"] == 0.015
     assert s["leagues"] == ["MLB"]
     f = summary["fails"]
     assert f["live bettor"] == 1 and f["not sports"] == 1 and f["inactive"] == 1
-    assert f["volume/ROI"] == 1 and f["already tracked/skipped"] == 1
+    assert f["P&L/volume"] == 1 and f["already tracked/skipped"] == 1
 
 
 @pytest.mark.asyncio
@@ -196,3 +212,31 @@ def test_store_skip_and_manual(tmp_path):
     st.add_manual(WAR, "w")          # adding un-skips
     assert WAR not in st.skipped()
     assert st.remove(SHARP) and not st.remove(SHARP)
+
+
+@pytest.mark.asyncio
+async def test_homerunhazard_regression(tmp_path):
+    """High-frequency winner: Polymarket's own sports P&L must drive the verdict.
+
+    Real numbers 2026-10-01: 1M +$349K on $100.4M, all-time +$1.73M on $380.3M.
+    Old sample-based math showed ROI -46% (1.5 days of settled bets vs 5 months
+    of unredeemed losers). The new path never touches those samples.
+    """
+    from polysharp.selector import deep_eval, passes
+
+    class API(FakeAPI):
+        async def user_pnl(self, user, period="MONTH", category="SPORTS"):
+            return {"WEEK": {"pnl": 544e3, "vol": 25e6, "rank": 5},
+                    "MONTH": {"pnl": 349281.21, "vol": 100430072.68, "rank": 26},
+                    "ALL": {"pnl": 1732524.54, "vol": 380277058.39, "rank": 62}}[period]
+
+        async def closed_positions(self, *a, **k):
+            raise AssertionError("must not rebuild P&L from closed-position samples")
+
+    c = cfg(tmp_path)
+    api = API()
+    s = await deep_eval(api, Markets(api, Store(c.db_path)), c, SHARP)
+    assert s["pnl_m"] == 349281.21 and s["pnl_all"] == 1732524.54
+    assert abs(s["margin_m"] - 0.00348) < 1e-5 and abs(s["margin_all"] - 0.00456) < 1e-5
+    ok, why = passes(s, c)
+    assert ok, why          # profitable, big volume, margin 0.46% >= 0.2% floor
