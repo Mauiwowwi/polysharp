@@ -160,3 +160,20 @@ async def test_supergroup_migration_is_followed(tmp_path, monkeypatch):
     assert app2.tg.chat_ids == [NEW]
     await app.tg.close()
     await app2.tg.close()
+
+
+@pytest.mark.asyncio
+async def test_tab_gets_short_general_gets_full():
+    tg, posted = tg_capture()
+    tg.topics = {GROUP: {"football": 11}}
+    await tg.send_alert("FULL alert", "football", short="short alert")
+    assert posted == [(GROUP, 11, "short alert"), (GROUP, None, "FULL alert")]
+    await tg.close()
+
+
+def test_short_pick_labels():
+    from polysharp.watcher import short_pick
+    assert short_pick("Spread: Browns (-3.5)", "Steelers") == "Steelers +3.5"
+    assert short_pick("Steelers vs. Browns: O/U 38.5", "Under") == "Steelers vs. Browns — Under 38.5"
+    assert short_pick("Titans vs. Giants", "Giants") == "Giants ML"
+    assert short_pick("Will Athletic Club win on 2026-09-16?", "No") == "Athletic Club NOT to win (draw or loss)"

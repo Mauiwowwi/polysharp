@@ -53,7 +53,7 @@ class TG:
     async def send(self, t, chat_id=None):
         self.sent.append(t)
 
-    async def send_alert(self, text, sport="other"):
+    async def send_alert(self, text, sport="other", short=None):
         self.sent.append(text)
 
 

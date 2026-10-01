@@ -112,6 +112,20 @@ def yes_no_label(title, yes):
     return f"{'YES' if yes else 'NO'}: {q}"
 
 
+def short_pick(title, outcome):
+    """Pick label for the compact tab format: totals keep the matchup, moneylines say ML."""
+    title, outcome = title or "", (outcome or "").strip()
+    label = pick_label(title, outcome)
+    if _SPREAD.search(title) or outcome.lower() in ("yes", "no"):
+        return label
+    if _TOTAL.search(title) and outcome.lower() in ("over", "under"):
+        matchup = title.split(":")[0].strip()
+        return f"{matchup} — {label}" if matchup and matchup != title else label
+    if " vs" in title.lower():
+        return f"{label} ML"
+    return label
+
+
 def american(p):
     """Polymarket price -> American odds string (0.71 -> -245, 0.40 -> +150)."""
     if not 0 < p < 1:
@@ -259,8 +273,9 @@ class Watcher:
                                  hedge_vs=hedge_vs, flip_vs=flip_vs, agree=agree, oppose=oppose,
                                  tailed=tailed, live=live, score=score)
         sport = sport_of((meta or {}).get("league"))
+        short = self.format_short(f0, usd, vwap, pos, fee, hedge_vs, flip_vs, live)
         if not self.muted():
-            await self.tg.send_alert(text, sport)
+            await self.tg.send_alert(text, sport, short)
             self.alerts_sent += 1
         if side == "BUY" and not is_hedge:
             self.store.mark_alerted(wallet, cond, f0["asset"])
@@ -508,6 +523,33 @@ class Watcher:
         while lines and lines[-1] == "":
             lines.pop()
         return "\n".join(lines)
+
+    def format_short(self, t, usd, vwap, pos, fee, hedge_vs=(), flip_vs=(), live=False):
+        """3-line version for the sport tabs: who/how, the bet, what they hold now."""
+        bits = []
+        if live:
+            bits.append("🔴 LIVE")
+        if t["side"] == "BUY":
+            if fee:
+                bits.append("💸 PAID" if is_paid(fee) else "🧱 SET")
+            if hedge_vs:
+                bits.append("🛡️ HEDGE")
+            elif flip_vs:
+                bits.append("🔄 FLIP")
+        else:
+            bits.append("🚪 EXIT" if pos is not None and pos["size"] < 1 else "📉 TRIM")
+        bits += [f"${usd:,.0f}",
+                 f"<a href=\"https://polymarket.com/profile/{t['wallet']}\">{self._name(t['wallet'])}</a>"]
+        link = f"https://polymarket.com/event/{t['event_slug'] or t['slug']}"
+        line2 = (f"<a href=\"{link}\"><b>{esc(short_pick(t['title'], t['outcome']))}</b></a>"
+                 f" @ {vwap:.3f} ({american(vwap)})")
+        if pos is None:
+            line3 = ""
+        elif pos["size"] < 1:
+            line3 = "📦 Fully out"
+        else:
+            line3 = f"📦 Holds ${pos['cost']:,.0f} ({pos['size']:,.0f} sh)"
+        return "\n".join(x for x in (" · ".join(bits), line2, line3) if x)
 
     async def _consensus(self, t, agree, sport="other"):
         n = len(agree) + 1

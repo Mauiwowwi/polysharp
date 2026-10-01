@@ -76,12 +76,13 @@ class Telegram:
                 log.warning("telegram send error: %s", e)
                 await asyncio.sleep(2)
 
-    async def send_alert(self, text, sport="other"):
-        """Bet alerts: every feed chat; in topic-enabled groups also the sport's tab."""
+    async def send_alert(self, text, sport="other", short=None):
+        """Bet alerts: every feed chat. In topic-enabled groups the sport's tab gets the
+        compact `short` version and General (the All feed) gets the full alert."""
         for c in self.chat_ids:
             tid = (self.topics.get(c) or {}).get(sport) or (self.topics.get(c) or {}).get("other")
             if tid:
-                await self.send(text, c, thread_id=tid)
+                await self.send(short or text, c, thread_id=tid)
                 if self.all_feed:
                     await self.send(text, c)          # General tab = the "All" feed
             else:

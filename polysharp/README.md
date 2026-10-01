@@ -93,7 +93,12 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 1. In the group, open **Edit → Topics** and turn it on.
 2. Make Whaletail a group **admin** with the **Manage Topics** permission.
 3. Restart the bot, or send `/topics setup`. It creates 🏈 Football, ⚾ Baseball, 🏀 Basketball, 🏒 Hockey, ⚽ Soccer, 🎾 Tennis, 🥊 Fighting and 🎯 Other.
-4. Each alert posts in its sport's tab **and** in **General**, which is the "All" feed. Set `ALL_FEED=false` to post only in the sport tab.
+4. Sport tabs get a **compact 3-line alert**, and **General** (the "All" feed) gets the full detailed one. Set `ALL_FEED=false` to skip General.
+   ```
+   💸 PAID · $9,313 · HomeRunHazard        (or 🧱 SET for passive limit orders)
+   Steelers +3.5 @ 0.710 (-245)
+   📦 Holds $18,440 (25,980 sh)
+   ```
 5. If you'd rather make the tabs yourself, run `/bindtopic football` (or baseball, basketball, hockey, soccer, tennis, fighting, other) inside each tab.
 6. Commands run inside a tab, like `/top10`, reply in that same tab.
 

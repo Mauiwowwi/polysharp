@@ -178,7 +178,7 @@ async def test_alert_filters_non_sports_and_live(tmp_path):
         async def send(self, t, chat_id=None):
             self.sent.append(t)
 
-        async def send_alert(self, t, sport="other"):
+        async def send_alert(self, t, sport="other", short=None):
             self.sent.append(t)
 
     tg = TG()
