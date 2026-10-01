@@ -315,3 +315,24 @@ def test_paid_fees_add_conviction_points(tmp_path):
     ooc = w.conviction_score(t, 1000, None, True, [], [], paid=True)
     assert paid["pts"] == base["pts"] + 1 and "paid fees" in paid["why"]
     assert ooc["pts"] == base["pts"] + 2 and "out of character" in ooc["why"]
+
+
+def test_soccer_yes_no_labels():
+    from polysharp.watcher import pick_label
+    assert pick_label("Will Athletic Club win on 2026-09-16?", "No") == "Athletic Club NOT to win (draw or loss)"
+    assert pick_label("Will Athletic Club win on 2026-09-16?", "Yes") == "Athletic Club to win"
+    assert pick_label("Will Germany vs. Serbia end in a draw?", "No") == "No draw (Germany or Serbia wins)"
+    assert pick_label("Will Germany vs. Serbia end in a draw?", "Yes") == "Draw (Germany vs Serbia)"
+    assert pick_label("Exact Score: Germany 1 - 1 Serbia?", "No") == "NOT exact score Germany 1-1 Serbia"
+    assert pick_label("Germany vs. Serbia: Both Teams to Score", "Yes") == "Both teams score"
+    assert pick_label("Will Haaland score a goal?", "No") == "NO: Haaland score a goal"
+    # non Yes/No markets untouched
+    assert pick_label("Spread: Browns (-3.5)", "Steelers") == "Steelers +3.5"
+
+
+def test_soccer_no_side_in_alert(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    t = {"wallet": A, "side": "BUY", "title": "Will Athletic Club win on 2026-09-16?", "outcome": "No",
+         "event_slug": "lal-ath-lev", "slug": "", "ts": time.time()}
+    m = w.format_alert(t, [{}], 13254, 23377, 0.567, None)
+    assert "<b>Athletic Club NOT to win (draw or loss) @ 0.567 (-131)</b>" in m

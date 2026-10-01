@@ -72,7 +72,44 @@ def pick_label(title, outcome):
     m = _TOTAL.search(title)
     if m and outcome.lower() in ("over", "under"):
         return f"{outcome} {m.group(1)}"
+    if outcome.lower() in ("yes", "no"):
+        return yes_no_label(title, outcome.lower() == "yes")
     return outcome
+
+
+_WIN = re.compile(r"^Will (.+?) win(?: on \d{4}-\d{2}-\d{2})?\s*\??$", re.I)
+_DRAW = re.compile(r"^Will (.+?) vs\.? (.+?) end in a draw\s*\??$", re.I)
+_EXACT = re.compile(r"^Exact Score:\s*(.+?)\s*\??$", re.I)
+_BTTS = re.compile(r"both teams to score", re.I)
+_WILL = re.compile(r"^Will (.+?)\s*\??$", re.I)
+
+
+def yes_no_label(title, yes):
+    """Turn a Yes/No soccer-style market into the actual bet.
+
+    Will Athletic Club win?        Yes -> "Athletic Club to win"   No -> "Athletic Club NOT to win (draw or loss)"
+    Will A vs. B end in a draw?    Yes -> "Draw (A vs B)"          No -> "No draw (A or B wins)"
+    Exact Score: A 1 - 1 B?        Yes -> "Exact score A 1-1 B"   No -> "NOT exact score A 1-1 B"
+    anything else                  "YES: <question>" / "NO: <question>"
+    """
+    t = (title or "").strip()
+    m = _DRAW.match(t)
+    if m:
+        a, b = m.group(1).strip(), m.group(2).strip()
+        return f"Draw ({a} vs {b})" if yes else f"No draw ({a} or {b} wins)"
+    m = _WIN.match(t)
+    if m:
+        team = m.group(1).strip()
+        return f"{team} to win" if yes else f"{team} NOT to win (draw or loss)"
+    m = _EXACT.match(t)
+    if m:
+        score = re.sub(r"\s*-\s*", "-", m.group(1).strip())
+        return f"Exact score {score}" if yes else f"NOT exact score {score}"
+    if _BTTS.search(t):
+        return "Both teams score" if yes else "Both teams NOT to score"
+    m = _WILL.match(t)
+    q = m.group(1) if m else t.rstrip("?")
+    return f"{'YES' if yes else 'NO'}: {q}"
 
 
 def american(p):
