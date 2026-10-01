@@ -13,9 +13,19 @@ def esc(s):
 
 
 class Telegram:
-    def __init__(self, token, chat_id):
+    def __init__(self, token, chat_ids, admin_ids=()):
+        """chat_ids: one id or a comma list. Alerts go to all of them; commands are
+        accepted from any of them. admin_ids: Telegram USER ids allowed to run
+        admin-only commands. If none are given, positive chat ids (private chats,
+        whose id equals the user's id) count as admins."""
         self.base = f"https://api.telegram.org/bot{token}"
-        self.chat_id = str(chat_id)
+        ids = [c.strip() for c in str(chat_ids).split(",") if c.strip()]
+        self.chat_ids = ids
+        self.chat_id = ids[0] if ids else ""
+        self.admins = {str(a).strip() for a in admin_ids if str(a).strip()} or \
+            {c for c in ids if not c.startswith("-")}
+        self.admin_only = set()
+        self.is_admin = False      # set per command so handlers (e.g. /help) can adapt
         self.http = httpx.AsyncClient(timeout=70, trust_env=True)
         self.handlers = {}
         self.callbacks = {}     # prefix -> async fn(data) for inline-button taps
@@ -24,7 +34,12 @@ class Telegram:
         await self.http.aclose()
 
     async def send(self, text, chat_id=None, buttons=None):
-        """buttons: list of rows, each a list of (label, callback_data) tuples."""
+        """buttons: list of rows, each a list of (label, callback_data) tuples.
+        chat_id None -> broadcast to every feed chat."""
+        if chat_id is None and len(self.chat_ids) > 1:
+            for c in self.chat_ids:
+                await self.send(text, c, buttons)
+            return
         chunks = _chunks(text, 3900)
         for i, chunk in enumerate(chunks):
             payload = {"chat_id": chat_id or self.chat_id, "text": chunk,
@@ -49,6 +64,11 @@ class Telegram:
                 log.warning("telegram send error: %s", e)
                 await asyncio.sleep(2)
 
+    async def send_admins(self, text, buttons=None):
+        """Private messages to each admin (they must have /start-ed the bot once)."""
+        for a in sorted(self.admins) or [self.chat_id]:
+            await self.send(text, a, buttons)
+
     def callback(self, prefix):
         def deco(fn):
             self.callbacks[prefix] = fn
@@ -71,7 +91,7 @@ class Telegram:
     async def _on_callback(self, cb):
         chat = str(((cb.get("message") or {}).get("chat") or {}).get("id", ""))
         data = cb.get("data") or ""
-        if chat != self.chat_id:
+        if chat not in self.chat_ids and chat not in self.admins:
             await self.answer_callback(cb.get("id"))
             return
         prefix = data.split(":", 1)[0]
@@ -89,6 +109,35 @@ class Telegram:
         elif reply:
             await self.send(reply, chat)
 
+    async def handle_update(self, upd):
+        if upd.get("callback_query"):
+            await self._on_callback(upd["callback_query"])
+            return
+        msg = upd.get("message") or {}
+        text = (msg.get("text") or "").strip()
+        chat = str(msg.get("chat", {}).get("id", ""))
+        user = str((msg.get("from") or {}).get("id", ""))
+        if not text.startswith("/") or (chat not in self.chat_ids and chat not in self.admins):
+            return
+        cmd, *args = text.split()
+        cmd = cmd[1:].split("@")[0].lower()
+        self.is_admin = user in self.admins
+        if cmd in self.admin_only and not self.is_admin:
+            await self.send("🔒 Only the bot admin can do that. Try /top10, /wallets or /help.", chat)
+            return
+        fn = self.handlers.get(cmd) or self.handlers.get("help")
+        if fn is None:
+            return
+        try:
+            reply = await fn(args)
+        except Exception as e:
+            log.exception("command %s failed", cmd)
+            reply = f"⚠️ /{esc(cmd)} failed: {esc(e)}"
+        if isinstance(reply, tuple):          # (text, buttons)
+            await self.send(reply[0], chat, buttons=reply[1])
+        elif reply:
+            await self.send(reply, chat)
+
     async def poll_commands(self):
         offset = None
         while True:
@@ -99,26 +148,7 @@ class Telegram:
                 r = await self.http.get(f"{self.base}/getUpdates", params=params)
                 for upd in r.json().get("result", []):
                     offset = upd["update_id"] + 1
-                    if upd.get("callback_query"):
-                        await self._on_callback(upd["callback_query"])
-                        continue
-                    msg = upd.get("message") or {}
-                    text = (msg.get("text") or "").strip()
-                    chat = str(msg.get("chat", {}).get("id", ""))
-                    if not text.startswith("/") or chat != self.chat_id:
-                        continue
-                    cmd, *args = text.split()
-                    cmd = cmd[1:].split("@")[0].lower()
-                    fn = self.handlers.get(cmd) or self.handlers.get("help")
-                    try:
-                        reply = await fn(args)
-                    except Exception as e:
-                        log.exception("command %s failed", cmd)
-                        reply = f"⚠️ /{esc(cmd)} failed: {esc(e)}"
-                    if isinstance(reply, tuple):          # (text, buttons)
-                        await self.send(reply[0], chat, buttons=reply[1])
-                    elif reply:
-                        await self.send(reply, chat)
+                    await self.handle_update(upd)
             except Exception as e:
                 log.warning("getUpdates error: %s", e)
                 await asyncio.sleep(5)

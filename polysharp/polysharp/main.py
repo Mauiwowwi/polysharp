@@ -153,7 +153,7 @@ class App:
         self.api = PolyAPI()
         self.store = Store(self.cfg.db_path)
         self.markets = Markets(self.api, self.store)
-        self.tg = Telegram(self.cfg.tg_token, self.cfg.tg_chat_id)
+        self.tg = Telegram(self.cfg.tg_token, self.cfg.tg_chat_id, self.cfg.admin_ids)
         self.watcher = Watcher(self.cfg, self.api, self.store, self.tg, self.markets)
         self.busy = False
         self._register()
@@ -250,13 +250,13 @@ class App:
                 exclude |= self.store.recently_suggested(self.cfg.suggest_cooldown_days)
             picks, summary = await suggest(self.api, self.markets, self.cfg, exclude)
             health = await self.watchlist_health()
-            await self.tg.send(self.format_digest(picks, summary, health))
+            await self.tg.send_admins(self.format_digest(picks, summary, health))
             self.store.mark_suggested(p["address"] for p in picks)
             self.store.set("last_suggest", time.time())
             self.store.prune()
         except Exception as e:
             log.exception("morning digest failed")
-            await self.tg.send(f"⚠️ Shortlist failed: {esc(e)}")
+            await self.tg.send_admins(f"⚠️ Shortlist failed: {esc(e)}")
         finally:
             self.busy = False
 
@@ -321,26 +321,23 @@ class App:
     # ---------------------------------------------------------------- commands
     def _register(self):
         tg, w, st, cfg = self.tg, self.watcher, self.store, self.cfg
+        tg.admin_only = set(self.ADMIN_ONLY)
 
         @tg.command("help")
         async def _help(args):
-            return ("<b>PolySharp commands</b>\n"
-                    "<b>Your feed</b>\n"
-                    "/add 0x… [name] — start alerting on a wallet\n"
-                    "/remove 0x… — stop alerting\n"
-                    "/wallets — your list with sports stats\n"
-                    "/stats 0x… — check any wallet (sports ROI, live %, activity)\n"
-                    "/top10 [name] — biggest open positions (no name = pick from buttons)\n"
-                    "<b>Shortlist</b>\n"
-                    f"/suggest — run the shortlist now (auto daily at {cfg.suggest_time})\n"
-                    "/skip 0x… [days] — hide from shortlists (default 30d)\n"
-                    "<b>Alerts</b>\n"
-                    "/min 5000 — minimum $ per alert\n"
-                    "/tier all|med|high — only show buys at this conviction or above\n"
-                    "/takeronly on|off — only alert when they paid fees to cross\n"
-                    "/livehedges on|off — in-game exits/hedges on positions you were alerted on\n"
-                    "/mute 2h · /unmute\n"
-                    "/status — feed health")
+            out = ("<b>PolySharp</b>\n"
+                   "/top10 [name] — biggest open positions (no name = pick from buttons)\n"
+                   "/wallets — accounts we follow, with stats\n"
+                   "/stats 0x… — check any wallet\n"
+                   "/status — feed health")
+            if tg.is_admin:
+                out += ("\n\n<b>Admin</b>\n"
+                        "/add 0x… [name] · /remove 0x… — manage the feed\n"
+                        f"/suggest — shortlist now (auto daily at {cfg.suggest_time}, sent to you privately)\n"
+                        "/skip 0x… [days] — hide from shortlists\n"
+                        "/min 5000 · /tier all|med|high · /takeronly on|off · /livehedges on|off\n"
+                        "/mute 2h · /unmute")
+            return out
 
         @tg.command("start")
         async def _start(args):
@@ -427,7 +424,7 @@ class App:
             if self.busy:
                 return "Already running — results coming shortly."
             asyncio.create_task(self.morning(manual=True))
-            return "🔎 Building the shortlist — takes a few minutes…"
+            return "🔎 Building the shortlist — takes a few minutes. It'll arrive in your private chat with the bot."
 
         @tg.command("refresh")
         async def _refresh(args):
@@ -506,6 +503,9 @@ class App:
                     + ("Only alerting on bundles where ≥50% was taken (fees paid)."
                        if on else "Alerting on all trades; conviction trades get ⚡."))
 
+    ADMIN_ONLY = {"add", "remove", "skip", "suggest", "refresh", "min", "tier",
+                  "takeronly", "livehedges", "mute", "unmute"}
+
     def _wallet_buttons(self):
         names = sorted(self.watcher.wallets.items(), key=lambda kv: (kv[1].get("name") or kv[0]).lower())
         btns = [(w.get("name") or a[:10], f"top:{a}") for a, w in names]
@@ -524,7 +524,9 @@ class App:
         lines.append(f"Feed: {len(self.watcher.wallets)} wallets you added"
                      + (" (auto-picked wallets cleared — feed is manual now)" if had_auto else ""))
         lines.append(f"Shortlist: daily at {self.cfg.suggest_time} ({self.cfg.tz}) · /suggest to run now")
-        await self.tg.send("🚀 <b>PolySharp online</b>\n" + "\n".join(lines))
+        lines.append(f"Chats: {len(self.tg.chat_ids)} · admins: {len(self.tg.admins)}"
+                     + ("" if self.tg.admins else " ⚠️ set ADMIN_USER_IDS"))
+        await self.tg.send_admins("🚀 <b>PolySharp online</b>\n" + "\n".join(lines))
 
         await asyncio.gather(
             self.watcher.run_ws(), self.watcher.run_poller(),

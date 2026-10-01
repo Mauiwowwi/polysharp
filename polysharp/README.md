@@ -75,13 +75,20 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 - Fee-free categories (geopolitics) give no signal.
 
 ## Telegram commands
-- **Feed:** `/add 0x… [name]`, `/remove 0x…`, `/wallets`, `/stats 0x…`, `/top10 [name]` (biggest open sports positions by $ in; with no name you get tappable buttons)
-- **Shortlist:** `/suggest` (runs now), `/skip 0x… [days]`
-- **Alerts:** `/min 5000`, `/takeronly on|off`, `/tier all|med|high`, `/livehedges on|off`, `/mute 2h`, `/unmute`, `/status`
+**Everyone** (group members): `/top10 [name]`, `/wallets`, `/stats 0x…`, `/status`, `/help`
+
+**Admin only:** `/add 0x… [name]`, `/remove 0x…`, `/skip 0x… [days]`, `/suggest`, `/min 5000`, `/tier all|med|high`, `/takeronly on|off`, `/livehedges on|off`, `/mute 2h`, `/unmute`
+
+## Group chat setup
+1. Add the bot to your group. To get the group's id, add it, send a message, then check `getUpdates`; group ids start with `-100`.
+2. Set `TELEGRAM_CHAT_ID` to the group id **and** your private chat id, comma-separated: `-1001234567890,123456789`. Alerts go to both, and commands work in both.
+3. Set `ADMIN_USER_IDS` to your Telegram user id. That's the same number as your private chat id.
+4. Non-admins who try an admin command get "🔒 Only the bot admin can do that". The morning shortlist and the startup message go only to admins, by private message.
 
 ## Settings (Railway variables, all optional)
 | Variable | Default | |
 |---|---|---|
+| `ADMIN_USER_IDS` | private ids in TELEGRAM_CHAT_ID | who can run admin commands |
 | `SUGGEST_TIME` / `BOT_TZ` | `08:00` / `America/Halifax` | when the shortlist arrives |
 | `SUGGEST_COUNT` | 8 | max wallets per shortlist |
 | `SUGGEST_MIN_MONTH_VOL` | 250000 | sports volume this month |

@@ -19,6 +19,9 @@ class Config:
     # Telegram
     tg_token: str = field(default_factory=lambda: _env("TELEGRAM_BOT_TOKEN", ""))
     tg_chat_id: str = field(default_factory=lambda: _env("TELEGRAM_CHAT_ID", ""))
+    # Telegram USER ids allowed to run admin commands (comma list). Empty -> private
+    # chat ids in TELEGRAM_CHAT_ID count as admins.
+    admin_ids: list = field(default_factory=lambda: _env("ADMIN_USER_IDS", [], list))
 
     # Storage (mount a Railway volume at /data so state survives redeploys)
     db_path: str = field(default_factory=lambda: _env("DB_PATH", "/data/polysharp.db"))
