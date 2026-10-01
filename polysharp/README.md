@@ -54,12 +54,22 @@ HIGH is ≥4 and MED is ≥2 (`TIER_HIGH`, `TIER_MED`). `/tier high` shows only 
 **Live.** In-game buys are never sent and never count toward agree/oppose. The one exception, toggled with `/livehedges on|off` (default on), is an in-game sell or hedge on a position you were alerted on pre-game. Those are tagged `🔴 LIVE`, so you know when a sharp is getting off something you may have tailed.
 
 ```
-⚡ CONVICTION 🟢 NEW BUY · $12,636
-[MLB] Dodgers vs. Padres · ⏳ starts in 3h 10m
-➡️ Dodgers @ 0.620  (20,000 sh)
-👤 177-letsgo · ROI +4.4% · $3.7M staked · n=68 · win 87%
-💸 TAKER 100% · paid $235.60 fees (1.90% of stake) · usually 22% taker
+TRADE ALERT! - HomeRunHazard
+
+Market: [NFL] Spread: Browns (-3.5)
+Outcome: Steelers +3.5
+Side: BUY
+Amount: 9,313.00 USDC (🚨 BUY TAKER 🚨)
+Price: 0.71c(-245)
+Size: 13,004.00 shares
+Time: 2026-10-01 13:01
+Starts: in 10h 42m
+
+🎯 Conviction +3 (⭐ MED): 2.1× their usual bet · paid fees · no opposition
+📦 Now holds 25,980 sh · avg 0.710 (-245) · cost $18,440
+💸 TAKER 100% · paid $80.33 fees (0.87% of stake) · usually 26% taker
 ```
+Tags in brackets on the Amount line: `🚨 BUY TAKER 🚨` (paid fees), `⚡ CONVICTION ⚡`, `🛡️ HEDGE 🛡️`, `⚖️ BOTH SIDES ⚖️`, `🤝 AGREES ×n`, `⚔️ OPPOSES ×n`, `🔴 LIVE 🔴`, `📉 TRIM` / `🚪 EXIT`. Passive limit-order buys get no tag, and their bottom line reads `🧱 MAKER`.
 
 ## Fee-based conviction (who paid to cross the spread)
 Polymarket only charges **takers**: `fee = contracts × rate × p × (1−p)`, in USDC, while makers pay nothing. Each `/activity` row has `size` (contracts), `price` and `usdcSize` (USDC actually moved), so:

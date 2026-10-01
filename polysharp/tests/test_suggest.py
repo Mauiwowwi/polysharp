@@ -197,7 +197,7 @@ async def test_alert_filters_non_sports_and_live(tmp_path):
     await wt.ingest(normalize(fill(UPCOMING, "0xc", NOW), "ws"))                          # pre-game
     await asyncio.sleep(0.4)
     assert len(tg.sent) == 1 and wt.skipped_filtered == 2
-    assert "[NFL]" in tg.sent[0] and "starts in 3h 10m" in tg.sent[0]
+    assert "[NFL]" in tg.sent[0] and "Starts: in 3h 10m" in tg.sent[0]
 
 
 def test_next_run_is_local_morning():

@@ -112,7 +112,7 @@ async def test_agree_and_oppose(tmp_path):
     assert "🤝 AGREES ×1" in msg and "⚔️ OPPOSES ×1" in msg
     assert "beta also on Dodgers: 8,000 sh @ 0.480" in msg
     assert "gamma is on <b>Padres</b>: 6,000 sh @ 0.520" in msg
-    assert "starts in 2h 59m" in msg or "starts in 3h 00m" in msg
+    assert "Starts: in 2h 59m" in msg or "Starts: in 3h 00m" in msg
 
 
 @pytest.mark.asyncio
@@ -140,7 +140,7 @@ async def test_hedge_pregame(tmp_path):
     await w.ingest(fill(A, PRE, NO, "Padres", 6000, 0.45, "0x2"))
     await flush()
     h = tg.sent[-1]
-    assert "🛡️ HEDGE BUY" in h and "Already holds <b>Dodgers</b> 10,000 sh" in h
+    assert "(🛡️ HEDGE 🛡️)" in h and "Already holds <b>Dodgers</b> 10,000 sh" in h
     # cost 5000 + 2700 = 7700 -> Padres wins 6000-7700 = -1700, Dodgers wins 10000-7700 = +2300
     assert "Padres wins -1,700" in h and "Dodgers wins +2,300" in h
     assert "OPPOSES" not in h and "CONVICTION" not in h
@@ -156,7 +156,7 @@ async def test_live_exit_on_tailed_position_only(tmp_path):
     await flush()
     assert len(tg.sent) == 1
     m = tg.sent[0]
-    assert "🔴 LIVE 📉 TRIM SELL" in m and "Getting off a position we alerted you on" in m
+    assert "(🔴 LIVE 🔴) (📉 TRIM)" in m and "Side: SELL" in m and "Getting off a position we alerted you on" in m
     st.set("live_hedges", False)                        # /livehedges off
     await w.ingest(fill(A, LIVE, YES, "Dodgers", 2000, 0.7, "0xs2", side="SELL"))
     await flush()
@@ -174,7 +174,7 @@ async def test_live_hedge_buy_on_tailed_position(tmp_path):
     api.hold(A, "0x" + "q" * 64, "333", "Over", 9000, 0.5)
     await w.ingest(fill(A, "0x" + "q" * 64, "333", "Over", 9000, 0.5, "0xo"))
     await flush()
-    assert len(tg.sent) == 1 and "🔴 LIVE 🛡️ HEDGE BUY" in tg.sent[0]
+    assert len(tg.sent) == 1 and "(🔴 LIVE 🔴)" in tg.sent[0] and "(🛡️ HEDGE 🛡️)" in tg.sent[0]
 
 
 # --- conviction score / tiers ------------------------------------------------
@@ -192,14 +192,14 @@ async def test_conviction_tiers_and_tier_filter(tmp_path):
     await flush()
     first = tg.sent[-1]
     # $2k exposure = 1.0x usual (+0), 1 agree (+1) -> 1 = LOW
-    assert first.startswith("<b>▫️ LOW") and "Conviction +1" in first and "no opposition" in first
+    assert "Conviction +1 (▫️ LOW)" in first and "no opposition" in first
     api.books[(A, PRE)] = []
     api.hold(A, PRE, YES, "Dodgers", 14000, 0.5)     # now $7k exposure = 3.5x
     await w.ingest(fill(A, PRE, YES, "Dodgers", 10000, 0.5, "0xa2"))
     await flush()
     second = tg.sent[-1]
     # 3.5x (+2) + 2nd buy (+1) + 1 agree (+1) = 4 -> HIGH
-    assert second.startswith("<b>🔥 HIGH") and "3.5× their usual bet" in second
+    assert "(🔥 HIGH)" in second and "3.5× their usual bet" in second
     assert "buy #2 on this side in 1h" in second
 
     # opposition drags it down, and /tier high hides it
@@ -250,12 +250,16 @@ async def test_alert_layout_order(tmp_path):
     await w.ingest(spread_fill())
     await flush()
     lines = tg.sent[0].split("\n")
-    assert "👤" in lines[0] and "HomeRunHazard</a>" in lines[0]           # name on the header line
+    assert lines[0].startswith("<b>TRADE ALERT!</b> - ") and "HomeRunHazard</a>" in lines[0]
     assert lines[1] == ""
-    assert "Spread: Browns (-3.5)" in lines[2]                             # market
-    assert "<b>Steelers +3.5 @ 0.710 (-245)</b> (13,004 sh)" in lines[3]   # the actual pick
-    assert "sports 1M" not in tg.sent[0] and "avg bet" not in tg.sent[0]   # no stats clutter
-    assert lines[-1].startswith("📦 Now holds 25,980 sh")                  # holdings last
+    assert lines[2].startswith("Market: [MLB]") and "Spread: Browns (-3.5)" in lines[2]
+    assert lines[3] == "Outcome: <b>Steelers +3.5</b>"
+    assert lines[4] == "Side: BUY"
+    assert lines[5].startswith("Amount: 9,232.84 USDC")
+    assert lines[6] == "Price: 0.71c(-245)" and lines[7] == "Size: 13,004.00 shares"
+    assert lines[8].startswith("Time: ") and lines[9].startswith("Starts: in ")
+    assert lines[10] == ""                                                  # analysis below a gap
+    assert lines[-1].startswith("📦 Now holds 25,980 sh")
     assert not any("after fill" in x for x in lines)
 
 
@@ -274,7 +278,7 @@ async def test_dust_on_other_side_is_not_a_hedge(tmp_path):
     await flush()
     m = tg.sent[0]
     assert "HEDGE" not in m and "Already holds" not in m and "Net after hedge" not in m
-    assert "🟢 ADD BUY" in m and "<b>Over 3.5 @ 0.510 (-104)</b>" in m
+    assert "Outcome: <b>Over 3.5</b>" in m and "Price: 0.51c(-104)" in m
     assert "Conviction" in m        # scored like any normal buy
 
 
@@ -286,7 +290,7 @@ async def test_flip_when_new_side_outweighs_old(tmp_path):
     await w.ingest(fill(A, PRE, YES, "Dodgers", 20000, 0.5, "0xf"))
     await flush()
     m = tg.sent[0]
-    assert "⚖️ BOTH SIDES BUY" in m and "Also holds <b>Padres</b> 6,000 sh" in m and "FLIP" not in m
+    assert "(⚖️ BOTH SIDES ⚖️)" in m and "Also holds <b>Padres</b> 6,000 sh" in m and "FLIP" not in m
     assert "Conviction" in m and "HEDGE" not in m
 
 
@@ -306,8 +310,8 @@ def test_paid_fees_lead_the_header(tmp_path):
     maker = {"taker_share": 0.0, "fees": 0.0, "fee_pct": 0.0, "coverage": 1.0}
     m1 = w.format_alert(t, [{}], 1895, 3255, 0.57, None, paid)
     m2 = w.format_alert(t, [{}], 1895, 3255, 0.57, None, maker)
-    assert m1.startswith("<b>💸 PAID $40 · 🟢 ADD BUY · $1,895</b>") and "<b>TAKER 100%</b>" in m1
-    assert m2.startswith("<b>🟢 ADD BUY · $1,895</b>") and "🧱 MAKER" in m2
+    assert "Amount: 1,895.00 USDC (🚨 BUY TAKER 🚨)" in m1 and "💸 TAKER 100%" in m1
+    assert "Amount: 1,895.00 USDC\n" in m2 and "🚨" not in m2 and "🧱 MAKER" in m2
 
 
 def test_paid_fees_add_conviction_points(tmp_path):
@@ -338,7 +342,7 @@ def test_soccer_no_side_in_alert(tmp_path):
     t = {"wallet": A, "side": "BUY", "title": "Will Athletic Club win on 2026-09-16?", "outcome": "No",
          "event_slug": "lal-ath-lev", "slug": "", "ts": time.time()}
     m = w.format_alert(t, [{}], 13254, 23377, 0.567, None)
-    assert "<b>Athletic Club NO @ 0.567 (-131)</b>" in m
+    assert "Outcome: <b>Athletic Club NO</b>" in m and "Price: 0.57c(-131)" in m
 
 
 @pytest.mark.asyncio
