@@ -286,7 +286,7 @@ async def test_flip_when_new_side_outweighs_old(tmp_path):
     await w.ingest(fill(A, PRE, YES, "Dodgers", 20000, 0.5, "0xf"))
     await flush()
     m = tg.sent[0]
-    assert "🔄 FLIP BUY" in m and "Was on <b>Padres</b> 6,000 sh" in m and "now bigger on Dodgers" in m
+    assert "⚖️ BOTH SIDES BUY" in m and "Also holds <b>Padres</b> 6,000 sh" in m and "FLIP" not in m
     assert "Conviction" in m and "HEDGE" not in m
 
 
@@ -367,3 +367,30 @@ async def test_position_lookup_never_lists_whole_account(tmp_path):
     await flush()
     m = tg.sent[0]
     assert "HEDGE" not in m and "Already holds" not in m and m.count("\n") < 15
+
+
+
+@pytest.mark.asyncio
+async def test_both_sides_bottom_line_shows_each_side(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    api.hold(A, PRE, NO, "No", 244, 0.512)              # $125 on NO
+    api.hold(A, PRE, YES, "Yes", 2098, 0.5)              # $1,049 on YES after this buy
+    f = fill(A, PRE, YES, "Yes", 2098, 0.5, "0xh1")
+    f["title"] = "Will Haiti win on 2026-10-01?"
+    await w.ingest(f)
+    await flush()
+    last = tg.sent[0].split("\n")[-1]
+    assert last == ("📦 <b>Haiti YES</b> $1,049 (2,098 sh) · <b>Haiti NO</b> $125 (244 sh)"
+                    " → bigger on <b>Haiti YES</b>")
+    assert "Now holds" not in tg.sent[0]
+
+
+@pytest.mark.asyncio
+async def test_hedge_bottom_line_bigger_on_old_side(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    api.hold(A, PRE, YES, "Dodgers", 10000, 0.5)         # $5,000
+    api.hold(A, PRE, NO, "Padres", 6000, 0.45)           # $2,700 (this buy)
+    await w.ingest(fill(A, PRE, NO, "Padres", 6000, 0.45, "0xh2"))
+    await flush()
+    last = tg.sent[0].split("\n")[-1]
+    assert last.startswith("📦 <b>Dodgers</b> $5,000") and last.endswith("bigger on <b>Dodgers</b>")

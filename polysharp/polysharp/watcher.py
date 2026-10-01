@@ -352,7 +352,7 @@ class Watcher:
 
         dust  (< HEDGE_DUST_PCT of this side, or < $50): ignored -> plain NEW/ADD
         other side >= this side:                         HEDGE (protecting it)
-        other side meaningful but now smaller:           FLIP (moved weight across)
+        other side meaningful but now smaller:           BOTH SIDES (now bigger on the new side)
         """
         other = [p for a, p in (book or {}).items() if a != asset and p["size"] >= 1]
         this_cost = (pos or {}).get("cost") or usd
@@ -451,7 +451,7 @@ class Watcher:
         if t["side"] == "BUY" and hedge_vs:
             tag = "🛡️ HEDGE"
         elif t["side"] == "BUY" and flip_vs:
-            tag = "🔄 FLIP"
+            tag = "⚖️ BOTH SIDES"
         elif t["side"] == "BUY":
             tag = "🟢 NEW" if pos and pos["size"] <= shares * 1.05 else "🟢 ADD"
         else:
@@ -519,13 +519,15 @@ class Watcher:
                          f"{h['size'] - total_cost:+,.0f}" for h in hedge_vs]
                 lines.append("📐 Net after hedge: " + " · ".join(outs))
         for fv in flip_vs:
-            lines.append(f"🔄 Was on <b>{esc(pick_label(t['title'], fv['outcome']))}</b> "
-                         f"{fv['size']:,.0f} sh @ {fv['avg']:.3f} ({american(fv['avg'])}) · "
-                         f"${fv['cost']:,.0f} — now bigger on {esc(pick)}")
+            lines.append(f"⚖️ Also holds <b>{esc(pick_label(t['title'], fv['outcome']))}</b> "
+                         f"{fv['size']:,.0f} sh @ {fv['avg']:.3f} ({american(fv['avg'])}) · ${fv['cost']:,.0f}")
         if t["side"] == "SELL" and tailed:
             lines.append("↩️ Getting off a position we alerted you on")
         # 4. where they stand now (bottom)
-        if pos is not None and t["side"] == "SELL":
+        both = self.both_sides_line(t, pos, list(hedge_vs) + list(flip_vs))
+        if both and t["side"] == "BUY":
+            lines.append(both)
+        elif pos is not None and t["side"] == "SELL":
             lines.append(f"📦 Still holds {pos['size']:,.0f} sh · avg {pos['avg']:.3f}"
                          if pos["size"] >= 1 else "📦 Fully out")
         elif pos and pos["size"] >= 1:
@@ -534,6 +536,17 @@ class Watcher:
         while lines and lines[-1] == "":
             lines.pop()
         return "\n".join(lines)
+
+    @staticmethod
+    def both_sides_line(t, pos, others):
+        """'📦 A $x (n sh) · B $y (m sh) → bigger on A' for wallets holding both outcomes."""
+        if not pos or pos.get("size", 0) < 1 or not others:
+            return None
+        sides = [(pick_label(t["title"], t["outcome"]), pos["cost"], pos["size"])]
+        sides += [(pick_label(t["title"], o["outcome"]), o["cost"], o["size"]) for o in others]
+        sides.sort(key=lambda x: -x[1])
+        body = " · ".join(f"<b>{esc(n)}</b> ${c:,.0f} ({sz:,.0f} sh)" for n, c, sz in sides)
+        return f"📦 {body} → bigger on <b>{esc(sides[0][0])}</b>"
 
     def format_short(self, t, usd, vwap, pos, fee, hedge_vs=(), flip_vs=(), live=False):
         """3-line version for the sport tabs: who/how, the bet, what they hold now."""
@@ -546,7 +559,7 @@ class Watcher:
             if hedge_vs:
                 bits.append("🛡️ HEDGE")
             elif flip_vs:
-                bits.append("🔄 FLIP")
+                bits.append("⚖️ BOTH SIDES")
         else:
             bits.append("🚪 EXIT" if pos is not None and pos["size"] < 1 else "📉 TRIM")
         bits += [f"${usd:,.0f}",
@@ -558,6 +571,8 @@ class Watcher:
             line3 = ""
         elif pos["size"] < 1:
             line3 = "📦 Fully out"
+        elif t["side"] == "BUY" and (hedge_vs or flip_vs):
+            line3 = self.both_sides_line(t, pos, list(hedge_vs) + list(flip_vs))
         else:
             line3 = f"📦 Holds ${pos['cost']:,.0f} ({pos['size']:,.0f} sh)"
         return "\n".join(x for x in (" · ".join(bits), line2, line3) if x)

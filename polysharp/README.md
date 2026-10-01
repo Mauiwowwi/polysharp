@@ -35,7 +35,7 @@ The same message ends with a health check on **your list**, flagging anyone who 
 - `🤝 AGREES ×n` / `⚔️ OPPOSES ×n` in the header, with one line per wallet showing size and average price.
 - `🔥 CONSENSUS` is sent as a separate message when `CONSENSUS_ALERT_WALLETS` (default 3) of your wallets are on the same side.
 - `🛡️ HEDGE` fires when a wallet buys the other side of a market where that side is still its **bigger** position. It shows both positions and the net result either way.
-- `🔄 FLIP` fires when the new side now outweighs a meaningful old position. It's scored like a normal buy, plus a note on what they were on before.
+- `⚖️ BOTH SIDES` fires when the new side now outweighs a meaningful position they already hold on the other side. It's scored like a normal buy, plus an "Also holds" line for the other side.
 - Leftover dust on the other side (under 10% of the new side, or under $50; set with `HEDGE_DUST_PCT`) is ignored, so it's a plain NEW/ADD.
 - `📉 TRIM` / `🚪 EXIT` fire when a wallet sells. They're marked `↩️` if it's a position you were alerted on.
 
