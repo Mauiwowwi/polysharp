@@ -398,3 +398,16 @@ async def test_hedge_bottom_line_bigger_on_old_side(tmp_path):
     await flush()
     last = tg.sent[0].split("\n")[-1]
     assert last.startswith("📦 <b>Dodgers</b> $5,000") and last.endswith("bigger on <b>Dodgers</b>")
+
+
+@pytest.mark.asyncio
+async def test_agree_found_even_if_bot_never_saw_their_trade(tmp_path):
+    """beta bought before the bot was running: still shows as 🤝 from live holdings."""
+    c, api, st, tg, w = setup(tmp_path)
+    api.hold(B, PRE, YES, "Dodgers", 220, 0.28)          # small $62 position, never indexed
+    api.hold(A, PRE, YES, "Dodgers", 10000, 0.5)
+    await w.ingest(fill(A, PRE, YES, "Dodgers", 10000, 0.5, "0xa"))
+    await flush()
+    msg = tg.sent[0]
+    assert "🤝 AGREES ×1" in msg
+    assert "🤝 beta also on Dodgers: 220 sh @ 0.280 (+257) · $62" in msg

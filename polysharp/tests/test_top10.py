@@ -191,3 +191,21 @@ async def test_top10_inside_sport_tab_defaults_to_that_sport(app):
     assert out.startswith("🏆 Top 3 🏈 Football positions")
     # a wallet name still works inside a tab
     assert "alwaysfade — top" in strip(await app.tg.handlers["top10"](["alwaysfade"]))
+
+
+def test_opponent_on_soccer_yes_no():
+    from polysharp.watcher import pick_label, opponent_of
+    ev = "Norway vs. Wales"
+    assert pick_label("Will Norway win on 2026-10-10?", "No", ev) == "Norway NO (playing Wales)"
+    assert pick_label("Will Wales win on 2026-10-10?", "Yes", ev) == "Wales YES (playing Norway)"
+    assert pick_label("Will Norway win on 2026-10-10?", "No") == "Norway NO"
+    assert pick_label("Will Norway vs. Wales end in a draw?", "Yes", ev) == "Draw YES (Norway vs Wales)"
+    assert opponent_of("Will Iwaki FC win on 2026-03-08?", "Iwaki FC vs. Ventforet Kōfu") == "Ventforet Kōfu"
+    assert opponent_of("Will Odisha FC win?", "Odisha FC vs. Odisha FC") is None
+
+
+def test_classify_gamma_keeps_event_title():
+    from polysharp.markets import classify_gamma
+    m = classify_gamma({"events": [{"slug": "fif-nor-wal-2026-10-10", "title": "Norway vs. Wales"}],
+                        "feeType": "sports_fees_v1"})
+    assert m["event_title"] == "Norway vs. Wales"

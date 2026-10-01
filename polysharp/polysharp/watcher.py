@@ -57,8 +57,11 @@ def is_paid(fee):
     return bool(fee) and fee.get("coverage", 1) >= 0.5 and fee.get("taker_share", 0) >= 0.5
 
 
-def pick_label(title, outcome):
+def pick_label(title, outcome, event=None):
     """The side the bettor actually holds, with its line.
+
+    event: the game's title ("Norway vs. Wales") -> "Will Norway win?" + No
+    becomes "Norway NO (playing Wales)".
 
     "Spread: Browns (-3.5)" + Steelers -> "Steelers +3.5"; + Browns -> "Browns -3.5"
     "...: O/U 39.5" + Under -> "Under 39.5"; moneyline / other -> outcome as-is.
@@ -75,8 +78,38 @@ def pick_label(title, outcome):
     if m and outcome.lower() in ("over", "under"):
         return f"{outcome} {m.group(1)}"
     if outcome.lower() in ("yes", "no"):
-        return yes_no_label(title, outcome.lower() == "yes")
+        label = yes_no_label(title, outcome.lower() == "yes")
+        opp = opponent_of(title, event)
+        return f"{label} (playing {opp})" if opp else label
     return outcome
+
+
+_VS = re.compile(r"\s+vs\.?\s+", re.I)
+
+
+def opponent_of(title, event):
+    """'Will Norway win…?' + event 'Norway vs. Wales' -> 'Wales' (None if unclear)."""
+    m = _WIN.match((title or "").strip())
+    if not m or not event:
+        return None
+    ev = re.sub(r"\s*-\s*(More Markets|Winner|Moneyline).*$", "", str(event), flags=re.I).strip()
+    teams = [x.strip(" ?") for x in _VS.split(ev)]
+    if len(teams) != 2 or not all(teams):
+        return None
+    subj = m.group(1).strip().lower()
+    for x, y in ((teams[0], teams[1]), (teams[1], teams[0])):
+        if x.lower() == subj and y.lower() != subj:
+            return y
+
+    def same(a):
+        a = a.lower()
+        return a == subj or a in subj or subj in a
+    a, b = teams
+    if same(a) and not same(b):
+        return b
+    if same(b) and not same(a):
+        return a
+    return None
 
 
 _WIN = re.compile(r"^Will (.+?) win(?: on \d{4}-\d{2}-\d{2})?\s*\??$", re.I)
@@ -452,7 +485,7 @@ class Watcher:
                      flip_vs=()):
         """Labelled 'TRADE ALERT!' layout: facts on top, analysis below a blank line."""
         buy = t["side"] == "BUY"
-        pick = pick_label(t["title"], t["outcome"])
+        pick = pick_label(t["title"], t["outcome"], (meta or {}).get("event_title"))
         tags = []
         if live:
             tags.append("🔴 LIVE 🔴")

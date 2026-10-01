@@ -237,7 +237,7 @@ class App:
         lines = ["",
                  f"<b>{i}. {dot} ${cost:,.0f}</b>" + (f" · {who}" if who else "") + when,
                  f"{league}<a href=\"{link}\">{esc(r.get('title'))}</a>",
-                 f"Outcome: <b>{esc(pick_label(r.get('title'), r.get('outcome')))}</b>",
+                 f"Outcome: <b>{esc(pick_label(r.get('title'), r.get('outcome'), m.get('event_title')))}</b>",
                  f"Trades: {n_trades if n_trades is not None else '—'} | Shares: {shares:,.0f}",
                  f"Cost: ${cost:,.0f} | Payout: ${shares:,.0f}",
                  f"💰 Profit if it wins: {'+' if shares >= cost else '−'}${abs(shares - cost):,.0f}",

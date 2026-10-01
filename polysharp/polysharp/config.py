@@ -68,6 +68,8 @@ class Config:
     consensus_alert_wallets: int = field(default_factory=lambda: _env("CONSENSUS_ALERT_WALLETS", 3, int))
     # How far back to look for other wallets' trades in the same market (holdings re-checked live)
     crowd_days: float = field(default_factory=lambda: _env("CROWD_DAYS", 7, float))
+    # Smallest holding by another tracked wallet that still shows as 🤝 agree / ⚔️ oppose
+    crowd_min_usd: float = field(default_factory=lambda: _env("CROWD_MIN_USD", 50, float))
     # Let in-game SELLs / hedge-buys through, but only on positions you were alerted on pre-game
     live_hedge_alerts: bool = field(default_factory=lambda: _env("LIVE_HEDGE_ALERTS", True, bool))
     # Conviction = this bundle >= X% taker, from a wallet that is normally <= Y% taker

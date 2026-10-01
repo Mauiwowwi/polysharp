@@ -82,7 +82,8 @@ def classify_gamma(m):
     sports = ft.startswith("sports") or bool(m.get("gameStartTime")) \
         or bool(m.get("sportsMarketType")) or league is not None
     return {"sports": sports, "game_start": parse_ts(m.get("gameStartTime")),
-            "type": m.get("sportsMarketType") or "", "league": league or "", "slug": slug}
+            "type": m.get("sportsMarketType") or "", "league": league or "", "slug": slug,
+            "event_title": ev.get("title") or ""}
 
 
 def classify_slug(slug):
@@ -115,7 +116,8 @@ class Markets:
                 meta = json.loads(r[1])
                 gs = meta.get("game_start")
                 stale = (gs and gs > now and now - r[2] > 3600) or \
-                        (r[3] == "slug" and now - r[2] > 86400)
+                        (r[3] == "slug" and now - r[2] > 86400) or \
+                        (r[3] == "gamma" and "event_title" not in meta)   # pre-opponent cache
                 if not stale:
                     out[r[0]] = meta
         return out
