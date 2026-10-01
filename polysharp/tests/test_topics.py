@@ -18,9 +18,13 @@ def tg_capture(all_feed=True):
     tg = Telegram("x", GROUP, admin_ids=[ME])
     tg.all_feed = all_feed
     posted = []
+    global silent
+    silent = []
 
     async def fake_post(payload):
         posted.append((payload["chat_id"], payload.get("message_thread_id"), payload["text"]))
+        if payload.get("disable_notification"):
+            silent.append(payload["text"])
     tg._post_message = fake_post
     return tg, posted
 
@@ -152,7 +156,7 @@ async def test_supergroup_migration_is_followed(tmp_path, monkeypatch):
     # alerts now go to the new group
     calls.clear()
     await app.tg.send_alert("NFL bet", "football")
-    assert all(chat == NEW for _, chat in calls) and len(calls) == 2
+    assert all(chat == NEW for _, chat in calls) and len(calls) == 1   # tab only (ALL_FEED off)
     # a restart with the OLD env var still lands on the new id
     app2 = App()
     app2.tg.http = httpx.AsyncClient(transport=migrating_transport([]))
@@ -177,3 +181,21 @@ def test_short_pick_labels():
     assert short_pick("Steelers vs. Browns: O/U 38.5", "Under") == "Steelers vs. Browns — Under 38.5"
     assert short_pick("Titans vs. Giants", "Giants") == "Giants ML"
     assert short_pick("Will Athletic Club win on 2026-09-16?", "No") == "Athletic Club NOT to win (draw or loss)"
+
+
+
+@pytest.mark.asyncio
+async def test_general_copy_is_silent():
+    tg, posted = tg_capture()
+    tg.topics = {GROUP: {"hockey": 5}}
+    await tg.send_alert("FULL", "hockey", short="short")
+    assert posted == [(GROUP, 5, "short"), (GROUP, None, "FULL")]
+    assert silent == ["FULL"]                      # only the tab copy pings
+    tg.silent_general = False
+    silent.clear()
+    await tg.send_alert("FULL", "hockey", short="short")
+    assert silent == []
+    tg.topics = {}                                  # no tabs: plain group post still pings
+    await tg.send_alert("plain", "hockey")
+    assert "plain" not in silent
+    await tg.close()

@@ -29,6 +29,7 @@ class Telegram:
         self.current_chat = self.current_thread = None
         self.topics = {}           # chat_id -> {sport: message_thread_id}
         self.all_feed = True       # also post every alert to the General tab
+        self.silent_general = True # ...without a notification (the sport tab does the pinging)
         self.migrations = {}       # old group id -> new supergroup id (Telegram upgrades)
         self.on_migrate = None     # async fn(old, new) so the app can persist + notify
         self.http = httpx.AsyncClient(timeout=70, trust_env=True)
@@ -38,7 +39,7 @@ class Telegram:
     async def close(self):
         await self.http.aclose()
 
-    async def send(self, text, chat_id=None, buttons=None, thread_id=None):
+    async def send(self, text, chat_id=None, buttons=None, thread_id=None, silent=False):
         """buttons: list of rows, each a list of (label, callback_data) tuples.
         chat_id None -> broadcast to every feed chat. thread_id -> a forum topic."""
         if chat_id is None and len(self.chat_ids) > 1:
@@ -52,6 +53,8 @@ class Telegram:
                        "parse_mode": "HTML", "disable_web_page_preview": True}
             if thread_id:
                 payload["message_thread_id"] = int(thread_id)
+            if silent:
+                payload["disable_notification"] = True
             if buttons and i == len(chunks) - 1:
                 payload["reply_markup"] = {"inline_keyboard": [
                     [{"text": lbl, "callback_data": data} for lbl, data in row] for row in buttons]}
@@ -83,8 +86,8 @@ class Telegram:
             tid = (self.topics.get(c) or {}).get(sport) or (self.topics.get(c) or {}).get("other")
             if tid:
                 await self.send(short or text, c, thread_id=tid)
-                if self.all_feed:
-                    await self.send(text, c)          # General tab = the "All" feed
+                if self.all_feed:                     # General tab = the "All" feed
+                    await self.send(text, c, silent=self.silent_general)
             else:
                 await self.send(text, c)
 

@@ -271,6 +271,7 @@ class App:
     async def ensure_topics(self):
         """Create any missing sport tabs in topic-enabled groups. Returns a status line."""
         self.tg.all_feed = self.cfg.all_feed
+        self.tg.silent_general = self.cfg.silent_general
         saved = self.store.get("topics", {})
         self.tg.topics = {c: dict(v) for c, v in saved.items()}
         self.tg.on_migrate = self.handle_migration

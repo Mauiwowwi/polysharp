@@ -78,7 +78,10 @@ class Config:
 
     # Group with Topics enabled: alerts go to the sport's tab (+ General if ALL_FEED)
     sport_topics: bool = field(default_factory=lambda: _env("SPORT_TOPICS", True, bool))
-    all_feed: bool = field(default_factory=lambda: _env("ALL_FEED", True, bool))
+    # Off by default: Telegram's own "All" view already merges every tab
+    all_feed: bool = field(default_factory=lambda: _env("ALL_FEED", False, bool))
+    # General copy posts silently so members only get pinged once (by the sport tab)
+    silent_general: bool = field(default_factory=lambda: _env("SILENT_GENERAL", True, bool))
 
     # Alert-time filters: skip non-sports markets and in-game (live) fills
     sports_only_alerts: bool = field(default_factory=lambda: _env("SPORTS_ONLY_ALERTS", True, bool))

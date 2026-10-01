@@ -93,7 +93,7 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 1. In the group, open **Edit → Topics** and turn it on.
 2. Make Whaletail a group **admin** with the **Manage Topics** permission.
 3. Restart the bot, or send `/topics setup`. It creates 🏈 Football, ⚾ Baseball, 🏀 Basketball, 🏒 Hockey, ⚽ Soccer, 🎾 Tennis, 🥊 Fighting and 🎯 Other.
-4. Sport tabs get a **compact 3-line alert**, and **General** (the "All" feed) gets the full detailed one. Set `ALL_FEED=false` to skip General.
+4. Each bet posts **only in its sport tab**, as a compact 3-line alert. Telegram's built-in **All** view shows every tab merged. Set `ALL_FEED=true` to also copy the full detailed alert into General, posted silently.
    ```
    💸 PAID · $9,313 · HomeRunHazard        (or 🧱 SET for passive limit orders)
    Steelers +3.5 @ 0.710 (-245)
@@ -119,7 +119,8 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 | `SUGGEST_MIN_SPORTS_SHARE` | 0.8 | min share of $ in sports |
 | `SUGGEST_MAX_DAYS_INACTIVE` | 7 | days since last bet |
 | `SUGGEST_COOLDOWN_DAYS` | 3 | don't re-suggest the same wallet sooner |
-| `SPORT_TOPICS` / `ALL_FEED` | true / true | route alerts to sport tabs; also post in General |
+| `SPORT_TOPICS` / `ALL_FEED` | true / false | route alerts to sport tabs; `ALL_FEED=true` also copies them into General (Telegram's built-in "All" view already merges every tab) |
+| `SILENT_GENERAL` | true | General copy posts without a notification, so only the sport tab pings |
 | `SPORTS_ONLY_ALERTS` / `PREGAME_ONLY_ALERTS` | true / true | alert-time filters |
 | `CONSENSUS_ALERT_WALLETS` | 3 | separate 🔥 message threshold |
 | `LIVE_HEDGE_ALERTS` | true | default for /livehedges |
