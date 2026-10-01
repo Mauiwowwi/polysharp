@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS trades (
     title TEXT, slug TEXT, side TEXT, usd REAL, price REAL);
 CREATE INDEX IF NOT EXISTS trades_asset ON trades(asset, ts);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS alerted (wallet TEXT, condition_id TEXT, asset TEXT, ts REAL,
+    PRIMARY KEY (wallet, condition_id, asset));
 """
 
 
@@ -37,37 +39,57 @@ class Store:
         self.db.commit()
 
     # --- wallets ------------------------------------------------------------
-    def replace_auto_wallets(self, picks):
-        """picks: list of dicts with address, name, stats. Manual wallets untouched."""
-        now = time.time()
+    def drop_auto_wallets(self):
+        """Feed is manual-only now: retire any wallets an older version auto-added."""
         with self.db:
-            self.db.execute("UPDATE wallets SET active=0 WHERE source='auto'")
-            for p in picks:
-                self.db.execute(
-                    """INSERT INTO wallets(address,name,source,stats,active,added_ts)
-                       VALUES (?,?,'auto',?,1,?)
-                       ON CONFLICT(address) DO UPDATE SET name=excluded.name,
-                       stats=excluded.stats, active=1
-                       WHERE wallets.source='auto'""",
-                    (p["address"].lower(), p["name"], json.dumps(p["stats"]), now))
+            self.db.execute("DELETE FROM wallets WHERE source='auto'")
 
     def add_manual(self, address, name=None, stats=None):
         with self.db:
-            self.db.execute("DELETE FROM blocked WHERE address=?", (address.lower(),))
             self.db.execute(
                 """INSERT INTO wallets(address,name,source,stats,active,added_ts)
                    VALUES (?,?,'manual',?,1,?)
                    ON CONFLICT(address) DO UPDATE SET source='manual', active=1,
-                   name=COALESCE(excluded.name, wallets.name)""",
+                   name=COALESCE(excluded.name, wallets.name), stats=excluded.stats""",
                 (address.lower(), name, json.dumps(stats or {}), time.time()))
+        self.unskip(address)
+
+    def update_stats(self, address, stats):
+        with self.db:
+            self.db.execute("UPDATE wallets SET stats=? WHERE address=?",
+                            (json.dumps(stats), address.lower()))
 
     def remove(self, address):
         with self.db:
-            self.db.execute("DELETE FROM wallets WHERE address=?", (address.lower(),))
-            self.db.execute("INSERT OR IGNORE INTO blocked VALUES (?)", (address.lower(),))
+            cur = self.db.execute("DELETE FROM wallets WHERE address=?", (address.lower(),))
+        return cur.rowcount > 0
 
-    def blocked(self):
-        return {r["address"] for r in self.db.execute("SELECT address FROM blocked")}
+    # --- suggestion bookkeeping ---------------------------------------------
+    def skip(self, address, days):
+        d = self.get("skipped", {})
+        d[address.lower()] = time.time() + days * 86400
+        self.set("skipped", d)
+
+    def unskip(self, address):
+        d = self.get("skipped", {})
+        if d.pop(address.lower(), None) is not None:
+            self.set("skipped", d)
+
+    def skipped(self):
+        now = time.time()
+        return {a for a, until in self.get("skipped", {}).items() if until > now}
+
+    def mark_suggested(self, addresses):
+        d = self.get("suggested", {})
+        now = time.time()
+        for a in addresses:
+            d[a.lower()] = now
+        d = {a: t for a, t in d.items() if now - t < 60 * 86400}
+        self.set("suggested", d)
+
+    def recently_suggested(self, days):
+        now = time.time()
+        return {a for a, t in self.get("suggested", {}).items() if now - t < days * 86400}
 
     def active_wallets(self):
         rows = self.db.execute("SELECT * FROM wallets WHERE active=1").fetchall()
@@ -94,6 +116,22 @@ class Store:
             t["title"], t["slug"], t["side"], t["usd"], t["price"]))
         self.db.commit()
 
+    def wallets_in_market(self, condition_id, since_ts):
+        rows = self.db.execute(
+            "SELECT DISTINCT wallet FROM trades WHERE condition_id=? AND ts>=?",
+            (condition_id, since_ts)).fetchall()
+        return [r["wallet"] for r in rows]
+
+    def mark_alerted(self, wallet, condition_id, asset):
+        self.db.execute("INSERT OR REPLACE INTO alerted VALUES (?,?,?,?)",
+                        (wallet, condition_id, asset, time.time()))
+        self.db.commit()
+
+    def was_alerted(self, wallet, condition_id, days=14):
+        return self.db.execute(
+            "SELECT 1 FROM alerted WHERE wallet=? AND condition_id=? AND ts>=?",
+            (wallet, condition_id, time.time() - days * 86400)).fetchone() is not None
+
     def buyers_of(self, asset, since_ts):
         rows = self.db.execute(
             """SELECT wallet, SUM(usd) usd, AVG(price) px FROM trades
@@ -106,3 +144,4 @@ class Store:
         with self.db:
             self.db.execute("DELETE FROM seen WHERE ts<?", (cut,))
             self.db.execute("DELETE FROM trades WHERE ts<?", (cut,))
+            self.db.execute("DELETE FROM alerted WHERE ts<?", (cut - 7 * 86400,))

@@ -17,6 +17,7 @@ import time
 import websockets
 
 from .fees import analyze_fill, summarize
+from .markets import is_live
 from .telegram import esc
 
 log = logging.getLogger(__name__)
@@ -45,8 +46,10 @@ def normalize(raw, source):
 
 
 class Watcher:
-    def __init__(self, cfg, api, store, tg):
+    def __init__(self, cfg, api, store, tg, markets=None):
         self.cfg, self.api, self.store, self.tg = cfg, api, store, tg
+        self.markets = markets
+        self.skipped_filtered = 0
         self.wallets = {}          # address -> {name, source, stats}
         self.bundles = {}          # key -> {"fills": [...], "task": Task}
         self.last_poll_ts = {}     # address -> last seen activity ts
@@ -79,7 +82,6 @@ class Watcher:
             self.store.mark_seen("ws-guard|" + base)
         if not self.store.mark_seen(f"{t['source']}|{base}|{round(t['size'], 2)}"):
             return
-        self.store.record_trade(t)
 
         key = f"{t['wallet']}|{t['asset']}|{t['side']}"
         b = self.bundles.get(key)
@@ -104,12 +106,43 @@ class Watcher:
     def muted(self):
         return time.time() < float(self.store.get("muted_until", 0))
 
+    def live_hedges_on(self):
+        return bool(self.store.get("live_hedges", self.cfg.live_hedge_alerts))
+
+    async def _meta(self, t):
+        if self.markets is None:
+            return None
+        try:
+            return (await self.markets.get(
+                {t["condition_id"]: t["event_slug"] or t["slug"]}))[t["condition_id"]]
+        except Exception as e:
+            log.debug("market meta failed: %s", e)
+            return None
+
     async def on_bundle(self, fills):
         f0 = fills[0]
         shares = sum(f["size"] for f in fills)
         notional = sum(f["size"] * f["price"] for f in fills)
         vwap = notional / shares if shares else f0["price"]
-        side = f0["side"]
+        side, wallet, cond = f0["side"], f0["wallet"], f0["condition_id"]
+
+        meta = await self._meta(f0)
+        live = bool(meta) and is_live(meta, f0["ts"])
+        if meta is not None and self.cfg.sports_only_alerts and not meta.get("sports"):
+            self.skipped_filtered += 1
+            return
+        tailed = self.store.was_alerted(wallet, cond)
+        if live and self.cfg.pregame_only_alerts and not (tailed and self.live_hedges_on()):
+            # In-game fills are dropped. Only exception: a SELL or hedge on a position
+            # we already alerted you on pre-game (checked again below for hedge-buys).
+            self.skipped_filtered += 1
+            return
+
+        if not live:
+            # index pre-game sports fills (any size) so agree/oppose can find this wallet
+            for f in fills:
+                self.store.record_trade(f)
+
         if notional < self.min_usd():
             return
         if side == "SELL" and not self.cfg.alert_sells:
@@ -117,21 +150,32 @@ class Watcher:
         if side == "BUY" and not (self.cfg.min_price <= vwap <= self.cfg.max_price):
             return
 
-        await self._enrich_fees(fills)
-        fee = summarize(fills)
-        conviction = self._is_conviction(f0["wallet"], fee)
-        if self.store.get("taker_only", False) and not (fee and fee["taker_share"] >= 0.5):
+        book = await self._wallet_book(wallet, cond)          # this wallet's holdings in the market
+        pos = book.get(f0["asset"]) if book is not None else None
+        hedge_vs = [p for a, p in (book or {}).items() if a != f0["asset"] and p["size"] >= 1]
+        is_hedge = side == "BUY" and bool(hedge_vs)
+        if live and self.cfg.pregame_only_alerts and side == "BUY" and not is_hedge:
+            self.skipped_filtered += 1
             return
 
-        pos = await self._position_after(f0)
+        await self._enrich_fees(fills)
+        fee = summarize(fills)
+        conviction = self._is_conviction(wallet, fee) and not is_hedge
+        if self.store.get("taker_only", False) and side == "BUY" and not is_hedge \
+                and not (fee and fee["taker_share"] >= 0.5):
+            return
+
+        agree, oppose = await self._crowd(f0) if side == "BUY" and not is_hedge else ([], [])
         usd = sum(f["usd"] for f in fills)
-        text = self.format_alert(f0, fills, usd, shares, vwap, pos, fee, conviction)
-        text += self._opposition_line(f0)
+        text = self.format_alert(f0, fills, usd, shares, vwap, pos, fee, conviction, meta,
+                                 hedge_vs=hedge_vs, agree=agree, oppose=oppose,
+                                 tailed=tailed, live=live)
         if not self.muted():
             await self.tg.send(text)
             self.alerts_sent += 1
-        if side == "BUY":
-            await self._check_consensus(f0)
+        if side == "BUY" and not is_hedge:
+            self.store.mark_alerted(wallet, cond, f0["asset"])
+            await self._consensus(f0, agree)
 
     async def _enrich_fees(self, fills):
         """WS fills lack usdcSize: look them up on /activity by tx hash."""
@@ -175,96 +219,131 @@ class Watcher:
         base = (self.wallets.get(addr, {}).get("stats") or {}).get("taker_share")
         return base is not None and base <= self.cfg.conviction_max_baseline
 
-    async def _position_after(self, t):
+    async def _wallet_book(self, wallet, cond):
+        """{asset: {size, avg, cost, outcome}} for one wallet in one market (None on error)."""
         try:
-            rows = await self.api.positions(t["wallet"], market=t["condition_id"])
+            rows = await self.api.positions(wallet, market=cond)
         except Exception:
             return None
+        out = {}
         for r in rows:
-            if str(r.get("asset")) == t["asset"]:
-                return {"size": float(r.get("size") or 0),
-                        "value": float(r.get("currentValue") or 0),
-                        "avg": float(r.get("avgPrice") or 0),
-                        "cost": float(r.get("initialValue") or 0)}
-        return {"size": 0.0, "value": 0.0, "avg": 0.0, "cost": 0.0}
+            out[str(r.get("asset"))] = {
+                "size": float(r.get("size") or 0), "avg": float(r.get("avgPrice") or 0),
+                "cost": float(r.get("initialValue") or 0), "outcome": r.get("outcome") or ""}
+        return out
+
+    async def _crowd(self, t):
+        """Other tracked wallets currently holding either side of this market."""
+        since = time.time() - self.cfg.crowd_days * 86400
+        others = [w for w in self.store.wallets_in_market(t["condition_id"], since)
+                  if w != t["wallet"] and w in self.wallets]
+        agree, oppose = [], []
+        books = await asyncio.gather(*(self._wallet_book(w, t["condition_id"]) for w in others))
+        floor = self.min_usd() * 0.5
+        for w, book in zip(others, books):
+            for asset, p in (book or {}).items():
+                if p["size"] < 1 or p["cost"] < floor:
+                    continue
+                row = {"wallet": w, **p}
+                (agree if asset == t["asset"] else oppose).append(row)
+        return agree, oppose
+
+    def _name(self, addr):
+        return esc(self.wallets.get(addr, {}).get("name") or addr[:8])
 
     def _wallet_line(self, addr):
         w = self.wallets.get(addr, {})
         s = w.get("stats") or {}
-        name = esc(w.get("name") or addr[:10])
-        bits = [f"👤 <a href=\"https://polymarket.com/profile/{addr}\">{name}</a>"]
+        bits = [f"👤 <a href=\"https://polymarket.com/profile/{addr}\">{self._name(addr)}</a>"]
         if s.get("n"):
             bits.append(f"ROI {s['roi']:+.1%} · ${s.get('cost', 0) / 1e6:,.1f}M staked · "
                         f"n={s['n']} · win {s['win_rate']:.0%}")
-        ranks = s.get("ranks") or {}
-        if ranks:
-            best = min(ranks.items(), key=lambda kv: kv[1])
-            bits.append(f"#{best[1]} {best[0].replace(':', ' ').title()}")
-        if w.get("source") == "manual":
-            bits.append("manual")
         return " · ".join(bits)
 
-    def format_alert(self, t, fills, usd, shares, vwap, pos, fee=None, conviction=False):
-        if t["side"] == "BUY":
+    def format_alert(self, t, fills, usd, shares, vwap, pos, fee=None, conviction=False, meta=None,
+                     hedge_vs=(), agree=(), oppose=(), tailed=False, live=False):
+        if t["side"] == "BUY" and hedge_vs:
+            tag = "🛡️ HEDGE"
+        elif t["side"] == "BUY":
             tag = "🟢 NEW" if pos and pos["size"] <= shares * 1.05 else "🟢 ADD"
         else:
-            tag = "🔴 EXIT" if pos is not None and pos["size"] < 1 else "🟠 TRIM"
-        link = f"https://polymarket.com/event/{t['event_slug'] or t['slug']}"
+            tag = "🚪 EXIT" if pos is not None and pos["size"] < 1 else "📉 TRIM"
         if conviction:
             tag = "⚡ CONVICTION " + tag
+        if live:
+            tag = "🔴 LIVE " + tag
+        verb = "BUY" if t["side"] == "BUY" else "SELL"
+        head = f"{tag} {verb} · ${usd:,.0f}"
+        if t["side"] == "BUY" and agree:
+            head += f" · 🤝 AGREES ×{len(agree)}"
+        if t["side"] == "BUY" and oppose:
+            head += f" · ⚔️ OPPOSES ×{len(oppose)}"
+        link = f"https://polymarket.com/event/{t['event_slug'] or t['slug']}"
+        when = ""
+        if meta and meta.get("game_start"):
+            mins = (meta["game_start"] - t["ts"]) / 60
+            if is_live(meta, t["ts"]):
+                when = " · 🔴 in-game"
+            elif mins >= 0:
+                when = f" · ⏳ starts in {int(mins // 60)}h {int(mins % 60):02d}m"
+        league = f"[{meta['league'].upper()}] " if meta and meta.get("league") else ""
         lines = [
-            f"<b>{tag} {t['side']} · ${usd:,.0f}</b>",
-            f"<a href=\"{link}\">{esc(t['title'])}</a>",
+            f"<b>{head}</b>",
+            f"{league}<a href=\"{link}\">{esc(t['title'])}</a>{when}",
             f"➡️ <b>{esc(t['outcome'])}</b> @ {vwap:.3f}  ({shares:,.0f} sh"
             + (f", {len(fills)} fills)" if len(fills) > 1 else ")"),
             self._wallet_line(t["wallet"]),
         ]
-        if pos and pos["size"] >= 1:
+        if hedge_vs:
+            for h in hedge_vs:
+                lines.append(f"🛡️ Already holds <b>{esc(h['outcome'])}</b> {h['size']:,.0f} sh "
+                             f"@ {h['avg']:.3f} (cost ${h['cost']:,.0f})")
+            if pos:
+                total_cost = pos["cost"] + sum(h["cost"] for h in hedge_vs)
+                outs = [f"{esc(t['outcome'])} wins {pos['size'] - total_cost:+,.0f}"]
+                outs += [f"{esc(h['outcome'])} wins {h['size'] - total_cost:+,.0f}" for h in hedge_vs]
+                lines.append("📐 Net after hedge: " + " · ".join(outs))
+        elif t["side"] == "SELL":
+            if pos is not None and pos["size"] >= 1:
+                lines.append(f"📦 Still holds {pos['size']:,.0f} sh · avg {pos['avg']:.3f}")
+            if tailed:
+                lines.append("↩️ Getting off a position we alerted you on")
+        elif pos and pos["size"] >= 1:
             lines.append(f"📦 Now holds {pos['size']:,.0f} sh · avg {pos['avg']:.3f} "
                          f"· cost ${pos['cost']:,.0f}")
-        if fee:
+        for a in agree:
+            lines.append(f"🤝 {self._name(a['wallet'])} also on {esc(a['outcome'] or t['outcome'])}: "
+                         f"{a['size']:,.0f} sh @ {a['avg']:.3f} (${a['cost']:,.0f})")
+        for o in oppose:
+            lines.append(f"⚔️ {self._name(o['wallet'])} is on <b>{esc(o['outcome'])}</b>: "
+                         f"{o['size']:,.0f} sh @ {o['avg']:.3f} (${o['cost']:,.0f})")
+        if fee and t["side"] == "BUY":
             base = (self.wallets.get(t["wallet"], {}).get("stats") or {}).get("taker_share")
             base_txt = f" · usually {base:.0%} taker" if base is not None else ""
             if fee["taker_share"] >= 0.01:
                 lines.append(f"💸 TAKER {fee['taker_share']:.0%} · paid ${fee['fees']:,.2f} fees "
-                             f"({fee['fee_pct']:.2%} of stake, rate {fee['rate']:.3f}){base_txt}")
+                             f"({fee['fee_pct']:.2%} of stake){base_txt}")
             else:
                 lines.append(f"🧱 MAKER — resting limit, no fees{base_txt}")
         lag = time.time() - t["ts"]
         lines.append(f"⏱ {lag:.0f}s after fill · via {t['source']}")
         return "\n".join(lines)
 
-    def _opposition_line(self, t):
-        since = time.time() - self.cfg.consensus_hours * 3600
-        rows = self.store.db.execute(
-            """SELECT wallet, outcome, SUM(usd) usd FROM trades
-               WHERE condition_id=? AND asset!=? AND side='BUY' AND ts>=? AND wallet!=?
-               GROUP BY wallet, outcome HAVING SUM(usd) >= ?""",
-            (t["condition_id"], t["asset"], since, t["wallet"], self.min_usd() * 0.5)).fetchall()
-        if not rows:
-            return ""
-        names = ", ".join(
-            f"{esc(self.wallets.get(r['wallet'], {}).get('name') or r['wallet'][:8])} "
-            f"({esc(r['outcome'])} ${r['usd']:,.0f})" for r in rows)
-        return f"\n⚔️ Opposed by: {names}"
-
-    async def _check_consensus(self, t):
-        since = time.time() - self.cfg.consensus_hours * 3600
-        buyers = self.store.buyers_of(t["asset"], since)
-        buyers = [b for b in buyers if b["usd"] >= self.min_usd() * 0.5]
-        n = len(buyers)
-        if n < self.cfg.consensus_wallets:
+    async def _consensus(self, t, agree):
+        n = len(agree) + 1
+        if n < self.cfg.consensus_alert_wallets:
             return
-        if not self.store.mark_seen(f"consensus|{t['asset']}|{n}|{int(since // 3600)}"):
+        if not self.store.mark_seen(f"consensus|{t['asset']}|{n}"):
             return
-        total = sum(b["usd"] for b in buyers)
-        who = "\n".join(
-            f"  • {esc(self.wallets.get(b['wallet'], {}).get('name') or b['wallet'][:8])}"
-            f" ${b['usd']:,.0f} @ {b['px']:.3f}" for b in sorted(buyers, key=lambda x: -x["usd"]))
+        total = sum(a["cost"] for a in agree)
+        who = "\n".join(f"  • {self._name(a['wallet'])} {a['size']:,.0f} sh @ {a['avg']:.3f} "
+                        f"(${a['cost']:,.0f})" for a in sorted(agree, key=lambda x: -x["cost"]))
         link = f"https://polymarket.com/event/{t['event_slug'] or t['slug']}"
-        text = (f"🔥 <b>CONSENSUS · {n} sharps · ${total:,.0f}</b>\n"
+        text = (f"🔥 <b>CONSENSUS · {n} of your wallets on the same side</b>\n"
                 f"<a href=\"{link}\">{esc(t['title'])}</a>\n"
-                f"➡️ <b>{esc(t['outcome'])}</b> (last {self.cfg.consensus_hours:g}h)\n{who}")
+                f"➡️ <b>{esc(t['outcome'])}</b>\n"
+                f"  • {self._name(t['wallet'])} (just now)\n{who}\n"
+                f"Others hold ${total:,.0f} combined")
         if not self.muted():
             await self.tg.send(text)
 

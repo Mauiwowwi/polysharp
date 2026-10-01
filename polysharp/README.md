@@ -4,31 +4,41 @@ Telegram alerts when proven-profitable Polymarket wallets take positions, in nea
 
 ## How it works
 
-**1. Picking the winners (every 24h)**
-- Pulls the top 100 of the Polymarket leaderboard for each slice in `LB_SLICES` (by default Month and All-time, Overall and Sports).
-- Re-scores every candidate from its own settled history:
-  - Up to 500 closed positions.
-  - **Plus resolved-but-unredeemed losers** (`/positions?redeemable=true`, curPrice 0). These never show up as "closed", so the leaderboard and the naive win rate both look better than they are.
-- Keeps wallets that pass all of `MIN_CLOSED`, `MIN_WIN_RATE`, `MIN_ROI`, `MIN_REALIZED_PNL` and `MAX_DAYS_INACTIVE`.
-- Ranks them by `ROI × √n` and tracks the top `MAX_WALLETS`. Market makers drop out on ROI, and one-hit whales drop out on n.
+**Your feed is manual.** Alerts only fire for wallets you `/add`. Remove them with `/remove`. The address is on each Polymarket profile.
 
-**2. Watching them (real time)**
-- **Websocket firehose** (`wss://ws-live-data.polymarket.com`, topic `activity/trades`): every Polymarket fill arrives with the trader's `proxyWallet`, and the bot filters for tracked wallets. Latency is about 1s.
-- **REST backstop**: `/activity` is polled per wallet, every 15s when the websocket is down or every 60s when it's healthy. Fills from the two feeds are deduped by tx hash.
-- Fills on the same wallet, outcome and side within `BUNDLE_SECONDS` are merged into one alert, so a sweep of the book reads as one trade.
+**Morning shortlist (08:00 America/Halifax by default).** The bot scans the Polymarket **sports** leaderboards (Week/Month/All-time, by P&L and by volume, top 300 each) and sends you a ranked list of wallets worth a look, each with a tap-to-copy `/add` command. Every metric is computed on **sports positions only**:
 
-**3. Alerts**
+- ≥100 settled sports bets and ≥$500K staked, including resolved-but-unredeemed losers, which Polymarket's own stats hide.
+- Sports ROI ≥2% (ranked by ROI × √bets).
+- ≥80% of recent buying in sports markets, which drops politics, war and crypto accounts.
+- ≤25% of recent sports buying placed **after the game started**, which drops live traders.
+- A bet within the last 7 days.
+
+The same message ends with a health check on **your list**, flagging anyone who went cold, turned live-heavy or drifted out of sports.
+
+**Sports vs. live detection** uses Polymarket's market data. Sports markets carry a `sports_fees` fee type, and game markets carry a `gameStartTime`. A fill more than 2 minutes after the start time counts as live. If the lookup misses, the bot falls back to the league prefix in the market URL (`mlb-`, `nfl-`, `nba-`…).
+
+**Alerts** fire in real time (websocket firehose plus a REST backstop).
+
+- By default the bot skips non-sports markets and in-game fills (`SPORTS_ONLY_ALERTS`, `PREGAME_ONLY_ALERTS`).
+- Game alerts show the league and the time to start.
+- Fills on the same wallet, outcome and side within `BUNDLE_SECONDS` merge into one alert.
+
+**Agree / oppose / hedge.** On every new pre-game buy the bot checks what your other wallets **currently hold** in that market. That's a live position lookup, so someone who already sold out doesn't count.
+- `🤝 AGREES ×n` / `⚔️ OPPOSES ×n` in the header, with one line per wallet showing size and average price.
+- `🔥 CONSENSUS` is sent as a separate message when `CONSENSUS_ALERT_WALLETS` (default 3) of your wallets are on the same side.
+- `🛡️ HEDGE` fires when a wallet buys the other side of a market it already holds. It shows both positions and the net result either way.
+- `📉 TRIM` / `🚪 EXIT` fire when a wallet sells. They're marked `↩️` if it's a position you were alerted on.
+
+**Live.** In-game buys are never sent and never count toward agree/oppose. The one exception, toggled with `/livehedges on|off` (default on), is an in-game sell or hedge on a position you were alerted on pre-game. Those are tagged `🔴 LIVE`, so you know when a sharp is getting off something you may have tailed.
+
 ```
-🟢 NEW BUY · $12,450
-Will the Dodgers win the NLCS?
-➡️ Yes @ 0.412  (30,219 sh, 4 fills)
-👤 sharpguy · win 61% · ROI +8.4% · n=312 · #14 Month Sports
-📦 Now holds 30,219 sh · avg 0.412 · cost $12,450
-⏱ 3s after fill · via ws
-⚔️ Opposed by: otherwhale (No $8,000)
+⚡ CONVICTION 🟢 NEW BUY · $12,636
+[MLB] Dodgers vs. Padres · ⏳ starts in 3h 10m
+➡️ Dodgers @ 0.620  (20,000 sh)
+👤 177-letsgo · ROI +4.4% · $3.7M staked · n=68 · win 87%
+💸 TAKER 100% · paid $235.60 fees (1.90% of stake) · usually 22% taker
 ```
-- Tags: `NEW` / `ADD` for buys, `TRIM` / `EXIT` for sells.
-- `🔥 CONSENSUS` fires when `CONSENSUS_WALLETS`+ tracked wallets buy the same outcome within `CONSENSUS_HOURS`.
 
 ## Fee-based conviction (who paid to cross the spread)
 Polymarket only charges **takers**: `fee = contracts × rate × p × (1−p)`, in USDC, while makers pay nothing. Each `/activity` row has `size` (contracts), `price` and `usdcSize` (USDC actually moved), so:
@@ -45,7 +55,26 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 - Fee-free categories (geopolitics) give no signal.
 
 ## Telegram commands
-`/status` `/wallets` `/stats 0x…` `/add 0x… [name]` `/remove 0x…` `/min 5000` `/takeronly on|off` `/mute 2h` `/unmute` `/refresh`
+- **Feed:** `/add 0x… [name]`, `/remove 0x…`, `/wallets`, `/stats 0x…`
+- **Shortlist:** `/suggest` (runs now), `/skip 0x… [days]`
+- **Alerts:** `/min 5000`, `/takeronly on|off`, `/livehedges on|off`, `/mute 2h`, `/unmute`, `/status`
+
+## Settings (Railway variables, all optional)
+| Variable | Default | |
+|---|---|---|
+| `SUGGEST_TIME` / `BOT_TZ` | `08:00` / `America/Halifax` | when the shortlist arrives |
+| `SUGGEST_COUNT` | 8 | max wallets per shortlist |
+| `SUGGEST_MIN_BETS` | 100 | settled sports bets |
+| `SUGGEST_MIN_STAKED` | 500000 | $ staked on sports |
+| `SUGGEST_MIN_ROI` | 0.02 | sports ROI |
+| `SUGGEST_MAX_LIVE_SHARE` | 0.25 | max share of sports $ bet in-game |
+| `SUGGEST_MIN_SPORTS_SHARE` | 0.8 | min share of $ in sports |
+| `SUGGEST_MAX_DAYS_INACTIVE` | 7 | days since last bet |
+| `SUGGEST_COOLDOWN_DAYS` | 3 | don't re-suggest the same wallet sooner |
+| `SPORTS_ONLY_ALERTS` / `PREGAME_ONLY_ALERTS` | true / true | alert-time filters |
+| `CONSENSUS_ALERT_WALLETS` | 3 | separate 🔥 message threshold |
+| `LIVE_HEDGE_ALERTS` | true | default for /livehedges |
+| `MIN_ALERT_USD` | 2000 | smallest bundle that alerts (or use `/min`) |
 
 ## Deploy on Railway
 1. Push this folder to a new GitHub repo and create a Railway service from it. It builds from the Dockerfile.

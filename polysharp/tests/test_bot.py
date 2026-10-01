@@ -6,7 +6,6 @@ import pytest
 import websockets
 
 from polysharp.config import Config
-from polysharp.selector import passes, score_history, select_wallets
 from polysharp.store import Store
 from polysharp.watcher import Watcher, normalize
 
@@ -88,29 +87,6 @@ def fill(wallet, size=5000, price=0.4, tx="0xt1", side="BUY", asset="111", outco
             "eventSlug": "x-event", "transactionHash": tx, "timestamp": int(time.time())}
 
 
-def test_score_and_filters(tmp_path):
-    c = cfg(tmp_path, min_staked=0)
-    s = score_history([{"totalBought": 100, "avgPrice": 0.5, "realizedPnl": 20, "timestamp": time.time()}] * 50,
-                      [{"curPrice": 0, "initialValue": 500}])
-    assert s["n"] == 51 and s["cost"] == 3000 and s["pnl"] == 500
-    assert abs(s["win_rate"] - 50 / 51) < 1e-3
-    ok, why = passes(s, c)
-    assert not ok and why == ["pnl=500"]
-    c.min_realized_pnl = 400
-    assert passes(s, c)[0]
-
-
-@pytest.mark.asyncio
-async def test_selection_drops_market_maker(tmp_path):
-    c = cfg(tmp_path)
-    picks, summary = await select_wallets(FakeAPI(), c)
-    addrs = [p["address"] for p in picks]
-    assert A in addrs and B in addrs and C not in addrs
-    assert summary["candidates"] == 5 and summary["evaluated"] == 4  # tiny pre-cut
-    b = next(p for p in picks if p["address"] == B)
-    assert b["stats"]["n"] == 51  # unredeemed loser counted
-
-
 @pytest.mark.asyncio
 async def test_bundling_dedupe_and_alert(tmp_path):
     c = cfg(tmp_path)
@@ -131,23 +107,15 @@ async def test_bundling_dedupe_and_alert(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_min_filter_and_consensus_and_opposition(tmp_path):
+async def test_min_filter(tmp_path):
     c = cfg(tmp_path)
     st, tg, api = Store(c.db_path), FakeTG(), FakeAPI()
-    for a, n in ((A, "alpha"), (B, "beta"), (C, "gamma")):
-        st.add_manual(a, n)
+    st.add_manual(A, "alpha")
     w = Watcher(c, api, st, tg)
     w.reload_wallets()
-    await w.ingest(normalize(fill(A, 100, 0.4, "0x1"), "ws"))                  # $40 -> filtered
-    await w.ingest(normalize(fill(C, 5000, 0.6, "0x0", asset="222", outcome="No"), "ws"))
-    await asyncio.sleep(0.3)
-    await w.ingest(normalize(fill(A, 5000, 0.4, "0x2"), "ws"))
-    await w.ingest(normalize(fill(B, 6000, 0.41, "0x3"), "ws"))
+    await w.ingest(normalize(fill(A, 100, 0.4, "0x1"), "ws"))   # $40 -> below min
     await asyncio.sleep(0.4)
-    joined = "\n".join(tg.sent)
-    assert "$40" not in joined
-    assert "CONSENSUS · 2 sharps" in joined
-    assert "Opposed by: gamma (No $3,000)" in joined
+    assert tg.sent == []
 
 
 @pytest.mark.asyncio
@@ -233,19 +201,6 @@ async def test_maker_fill_and_taker_only_mode(tmp_path):
     await w.ingest(normalize(f2, "ws"))
     await asyncio.sleep(0.4)
     assert len(tg.sent) == 1
-
-
-@pytest.mark.asyncio
-async def test_volume_filter_drops_small_sample_high_roi(tmp_path):
-    c = cfg(tmp_path, min_closed=150, min_staked=1_000_000, min_roi=0.03, min_win_rate=0.5,
-            min_realized_pnl=50000)
-    api = FakeAPI()
-    s = await __import__("polysharp.selector", fromlist=["evaluate"]).evaluate(api, c, D)
-    ok, why = passes(s, c)
-    assert s["roi"] > 0.5 and not ok
-    assert any(w.startswith("n=") for w in why) and any(w.startswith("staked=") for w in why)
-    picks, _ = await select_wallets(api, c)
-    assert D not in [p["address"] for p in picks]
 
 
 @pytest.mark.asyncio

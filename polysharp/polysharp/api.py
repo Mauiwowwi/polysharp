@@ -6,6 +6,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 DATA_API = "https://data-api.polymarket.com"
+GAMMA_API = "https://gamma-api.polymarket.com"
 
 
 class PolyAPI:
@@ -14,17 +15,22 @@ class PolyAPI:
         self.http = httpx.AsyncClient(
             base_url=DATA_API, timeout=20, trust_env=True,
             headers={"User-Agent": "polysharp/1.0"})
+        self.gamma = httpx.AsyncClient(
+            base_url=GAMMA_API, timeout=20, trust_env=True,
+            headers={"User-Agent": "polysharp/1.0"})
         self.sem = asyncio.Semaphore(concurrency)
 
     async def close(self):
         await self.http.aclose()
+        await self.gamma.aclose()
 
-    async def _get(self, path, params, retries=4):
+    async def _get(self, path, params, retries=4, client=None):
+        client = client or self.http
         delay = 1.0
         for attempt in range(retries):
             try:
                 async with self.sem:
-                    r = await self.http.get(path, params=params)
+                    r = await client.get(path, params=params)
                 if r.status_code == 429 or r.status_code >= 500:
                     raise httpx.HTTPStatusError(f"{r.status_code}", request=r.request, response=r)
                 r.raise_for_status()
@@ -68,3 +74,12 @@ class PolyAPI:
         if start:
             params["start"] = int(start)
         return await self._get("/activity", params) or []
+
+    async def gamma_markets(self, condition_ids):
+        """Market metadata for up to ~20 condition ids (open and closed)."""
+        out = []
+        for closed in ("true", "false"):
+            params = [("condition_ids", c) for c in condition_ids]
+            params += [("closed", closed), ("limit", len(condition_ids) + 5)]
+            out += await self._get("/markets", params, client=self.gamma) or []
+        return out

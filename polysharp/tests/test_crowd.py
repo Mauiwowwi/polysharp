@@ -1,0 +1,174 @@
+"""Agree / oppose / hedge / live-gating behaviour of the alert pipeline."""
+import asyncio
+import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from polysharp.config import Config
+from polysharp.markets import Markets
+from polysharp.store import Store
+from polysharp.watcher import Watcher, normalize
+
+NOW = int(time.time())
+A, B, C, D = ("0x" + ch * 40 for ch in "abcd")
+PRE = "0x" + "p" * 64        # game starts in 3h
+LIVE = "0x" + "l" * 64       # game started 1h ago
+YES, NO = "111", "222"       # outcome tokens of whichever market
+
+
+def iso(ts):
+    return datetime.fromtimestamp(ts, ZoneInfo("UTC")).isoformat()
+
+
+class FakeAPI:
+    def __init__(self):
+        self.books = {}      # (wallet, cond) -> list of position rows
+
+    def hold(self, wallet, cond, asset, outcome, size, avg):
+        self.books.setdefault((wallet, cond), []).append(
+            {"asset": asset, "outcome": outcome, "size": size, "avgPrice": avg,
+             "initialValue": size * avg, "currentValue": size * avg})
+
+    async def positions(self, user, market=None, redeemable=None):
+        return self.books.get((user, market), [])
+
+    async def activity(self, user, start=None, limit=100):
+        return []
+
+    async def gamma_markets(self, cids):
+        out = []
+        for c in cids:
+            gs = NOW + 3 * 3600 if c == PRE else NOW - 3600
+            out.append({"conditionId": c, "feeType": "sports_fees_v3", "gameStartTime": iso(gs),
+                        "events": [{"slug": "mlb-lad-sd-2026-10-01"}]})
+        return out
+
+
+class TG:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, t, chat_id=None):
+        self.sent.append(t)
+
+
+def setup(tmp_path, **kw):
+    c = Config()
+    c.db_path = str(tmp_path / "t.db")
+    c.tg_token = c.tg_chat_id = "x"
+    c.bundle_seconds = 0.15
+    c.fee_retry_seconds = 0
+    c.min_alert_usd = 1000
+    for k, v in kw.items():
+        setattr(c, k, v)
+    api, st, tg = FakeAPI(), Store(c.db_path), TG()
+    for addr, name in ((A, "alpha"), (B, "beta"), (C, "gamma"), (D, "delta")):
+        st.add_manual(addr, name)
+    w = Watcher(c, api, st, tg, Markets(api, st))
+    w.reload_wallets()
+    return c, api, st, tg, w
+
+
+def fill(wallet, cond, asset, outcome, size, price, tx, side="BUY", ts=None):
+    return normalize({"proxyWallet": wallet, "conditionId": cond, "asset": asset, "outcome": outcome,
+                      "size": size, "price": price, "side": side, "transactionHash": tx,
+                      "title": "Dodgers vs. Padres", "slug": "s", "eventSlug": "mlb-lad-sd",
+                      "timestamp": ts or NOW}, "ws")
+
+
+async def flush():
+    await asyncio.sleep(0.35)
+
+
+@pytest.mark.asyncio
+async def test_live_buy_never_alerts_and_isnt_indexed(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    api.hold(A, LIVE, YES, "Dodgers", 10000, 0.5)
+    await w.ingest(fill(A, LIVE, YES, "Dodgers", 10000, 0.5, "0x1"))
+    await flush()
+    assert tg.sent == [] and w.skipped_filtered == 1
+    assert st.wallets_in_market(LIVE, 0) == []      # live fill can't feed agree/oppose
+
+
+@pytest.mark.asyncio
+async def test_agree_and_oppose(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    # beta already on Dodgers, gamma on Padres (both pre-game)
+    api.hold(B, PRE, YES, "Dodgers", 8000, 0.48)
+    api.hold(C, PRE, NO, "Padres", 6000, 0.52)
+    await w.ingest(fill(B, PRE, YES, "Dodgers", 8000, 0.48, "0xb"))
+    await w.ingest(fill(C, PRE, NO, "Padres", 6000, 0.52, "0xc"))
+    await flush()
+    tg.sent.clear()
+    api.hold(A, PRE, YES, "Dodgers", 10000, 0.5)
+    await w.ingest(fill(A, PRE, YES, "Dodgers", 10000, 0.5, "0xa"))
+    await flush()
+    msg = tg.sent[0]
+    assert "🤝 AGREES ×1" in msg and "⚔️ OPPOSES ×1" in msg
+    assert "beta also on Dodgers: 8,000 sh @ 0.480" in msg
+    assert "gamma is on <b>Padres</b>: 6,000 sh @ 0.520" in msg
+    assert "starts in 2h 59m" in msg or "starts in 3h 00m" in msg
+
+
+@pytest.mark.asyncio
+async def test_consensus_message_at_three(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    for i, who in enumerate((B, C)):
+        api.hold(who, PRE, YES, "Dodgers", 5000, 0.5)
+        await w.ingest(fill(who, PRE, YES, "Dodgers", 5000, 0.5, f"0x{i}"))
+    await flush()
+    assert not any("CONSENSUS" in m for m in tg.sent)   # 2 isn't enough
+    api.hold(A, PRE, YES, "Dodgers", 5000, 0.5)
+    await w.ingest(fill(A, PRE, YES, "Dodgers", 5000, 0.5, "0xa"))
+    await flush()
+    cons = [m for m in tg.sent if "CONSENSUS" in m]
+    assert len(cons) == 1 and "3 of your wallets" in cons[0]
+
+
+@pytest.mark.asyncio
+async def test_hedge_pregame(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    api.hold(A, PRE, YES, "Dodgers", 10000, 0.5)
+    await w.ingest(fill(A, PRE, YES, "Dodgers", 10000, 0.5, "0x1"))
+    await flush()
+    api.hold(A, PRE, NO, "Padres", 6000, 0.45)
+    await w.ingest(fill(A, PRE, NO, "Padres", 6000, 0.45, "0x2"))
+    await flush()
+    h = tg.sent[-1]
+    assert "🛡️ HEDGE BUY" in h and "Already holds <b>Dodgers</b> 10,000 sh" in h
+    # cost 5000 + 2700 = 7700 -> Padres wins 6000-7700 = -1700, Dodgers wins 10000-7700 = +2300
+    assert "Padres wins -1,700" in h and "Dodgers wins +2,300" in h
+    assert "OPPOSES" not in h and "CONVICTION" not in h
+
+
+@pytest.mark.asyncio
+async def test_live_exit_on_tailed_position_only(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    st.mark_alerted(A, LIVE, YES)                      # we alerted A's Dodgers buy pre-game
+    api.hold(A, LIVE, YES, "Dodgers", 2000, 0.5)       # still holds a bit after selling
+    await w.ingest(fill(A, LIVE, YES, "Dodgers", 8000, 0.7, "0xs", side="SELL"))
+    await w.ingest(fill(B, LIVE, YES, "Dodgers", 8000, 0.7, "0xt", side="SELL"))  # never tailed
+    await flush()
+    assert len(tg.sent) == 1
+    m = tg.sent[0]
+    assert "🔴 LIVE 📉 TRIM SELL" in m and "Getting off a position we alerted you on" in m
+    st.set("live_hedges", False)                        # /livehedges off
+    await w.ingest(fill(A, LIVE, YES, "Dodgers", 2000, 0.7, "0xs2", side="SELL"))
+    await flush()
+    assert len(tg.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_live_hedge_buy_on_tailed_position(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    st.mark_alerted(A, LIVE, YES)
+    api.hold(A, LIVE, YES, "Dodgers", 10000, 0.5)
+    api.hold(A, LIVE, NO, "Padres", 9000, 0.3)
+    await w.ingest(fill(A, LIVE, NO, "Padres", 9000, 0.3, "0xh"))
+    # a live non-hedge buy by the same wallet in another live market is still dropped
+    api.hold(A, "0x" + "q" * 64, "333", "Over", 9000, 0.5)
+    await w.ingest(fill(A, "0x" + "q" * 64, "333", "Over", 9000, 0.5, "0xo"))
+    await flush()
+    assert len(tg.sent) == 1 and "🔴 LIVE 🛡️ HEDGE BUY" in tg.sent[0]
