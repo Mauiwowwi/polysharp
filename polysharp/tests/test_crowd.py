@@ -339,3 +339,31 @@ def test_soccer_no_side_in_alert(tmp_path):
          "event_slug": "lal-ath-lev", "slug": "", "ts": time.time()}
     m = w.format_alert(t, [{}], 13254, 23377, 0.567, None)
     assert "<b>Athletic Club NOT to win (draw or loss) @ 0.567 (-131)</b>" in m
+
+
+@pytest.mark.asyncio
+async def test_combo_fill_without_market_is_dropped(tmp_path):
+    """UpTheBlues 12:27: fill with no title/outcome/market -> was spammed as a giant HEDGE."""
+    c, api, st, tg, w = setup(tmp_path)
+    for i in range(500):                                   # their whole account
+        api.hold(A, "", f"x{i}", "YES", 50000, 0.1)
+    raw = {"proxyWallet": A, "conditionId": "", "asset": "999", "outcome": "", "title": "",
+           "size": 940, "price": 0.967, "side": "BUY", "transactionHash": "0xcombo", "timestamp": NOW}
+    await w.ingest(normalize(raw, "ws"))
+    await flush()
+    assert tg.sent == [] and w.skipped_filtered == 1
+
+
+@pytest.mark.asyncio
+async def test_position_lookup_never_lists_whole_account(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+
+    async def everything(user, market=None, redeemable=None, sort=None):
+        # simulate the API ignoring the market filter and returning the whole account
+        return [{"asset": f"x{i}", "conditionId": f"0x{i}", "outcome": "YES", "size": 50000,
+                 "avgPrice": 0.1, "initialValue": 5000} for i in range(500)]
+    api.positions = everything
+    await w.ingest(fill(A, PRE, YES, "Dodgers", 10000, 0.5, "0xn"))
+    await flush()
+    m = tg.sent[0]
+    assert "HEDGE" not in m and "Already holds" not in m and m.count("\n") < 15

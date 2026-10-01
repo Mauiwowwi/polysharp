@@ -217,9 +217,15 @@ class Watcher:
         vwap = notional / shares if shares else f0["price"]
         side, wallet, cond = f0["side"], f0["wallet"], f0["condition_id"]
 
+        if not cond or not f0["asset"] or not (f0["title"] or "").strip():
+            # combo/parlay or malformed fill: no single market to label, filter or check
+            self.skipped_filtered += 1
+            log.info("skipping fill with no market (combo?) from %s", wallet)
+            return
         meta = await self._meta(f0)
         live = bool(meta) and is_live(meta, f0["ts"])
-        if meta is not None and self.cfg.sports_only_alerts and not meta.get("sports"):
+        if self.cfg.sports_only_alerts and self.markets is not None and \
+                (meta is None or not meta.get("sports")):
             self.skipped_filtered += 1
             return
         tailed = self.store.was_alerted(wallet, cond)
@@ -326,9 +332,15 @@ class Watcher:
 
     async def _wallet_book(self, wallet, cond):
         """{asset: {size, avg, cost, outcome}} for one wallet in one market (None on error)."""
+        if not cond:
+            return None
         try:
             rows = await self.api.positions(wallet, market=cond)
         except Exception:
+            return None
+        rows = [r for r in rows if not r.get("conditionId") or r.get("conditionId") == cond]
+        if len(rows) > 3:          # a binary market has 2 outcomes; anything bigger is junk
+            log.warning("position lookup for %s returned %d rows; ignoring", cond, len(rows))
             return None
         out = {}
         for r in rows:
@@ -499,7 +511,7 @@ class Watcher:
                          f"<b>{esc(pick_label(t['title'], o['outcome']))}</b>: "
                          f"{o['size']:,.0f} sh @ {o['avg']:.3f} ({american(o['avg'])}) · ${o['cost']:,.0f}")
         if hedge_vs:
-            for h in hedge_vs:
+            for h in hedge_vs[:3]:
                 lines.append(f"🛡️ Already holds <b>{esc(pick_label(t['title'], h['outcome']))}</b> "
                              f"{h['size']:,.0f} sh @ {h['avg']:.3f} ({american(h['avg'])}) · ${h['cost']:,.0f}")
             if pos:
