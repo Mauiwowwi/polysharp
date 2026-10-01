@@ -28,6 +28,29 @@ LEAGUES = {
     "mma", "boxing", "pga", "golf", "liv", "f1", "nascar", "indycar", "ipl", "cricket",
     "afl", "nrl", "rugby", "euroleague", "nbl", "khl", "shl", "ahl", "xfl", "ufl",
 }
+SPORTS = {   # sport bucket -> (topic title, leagues)
+    "football": ("🏈 Football", {"nfl", "cfb", "ncaaf", "cfl", "xfl", "ufl"}),
+    "baseball": ("⚾ Baseball", {"mlb", "kbo", "npb"}),
+    "basketball": ("🏀 Basketball", {"nba", "wnba", "cbb", "ncaab", "ncaaw", "euroleague", "nbl"}),
+    "hockey": ("🏒 Hockey", {"nhl", "khl", "shl", "ahl"}),
+    "soccer": ("⚽ Soccer", {"mls", "epl", "ucl", "uel", "uecl", "lal", "laliga", "sea", "seriea", "bun",
+                            "bundesliga", "fl1", "ligue1", "ere", "eredivisie", "por", "arg", "bra", "mex",
+                            "tur", "sco", "efl", "fifa", "wc", "uefa", "unl", "concacaf", "copa"}),
+    "tennis": ("🎾 Tennis", {"atp", "wta", "tennis"}),
+    "fighting": ("🥊 Fighting", {"ufc", "mma", "boxing"}),
+    "other": ("🎯 Other", set()),
+}
+LEAGUES |= set().union(*(lg for _, lg in SPORTS.values()))
+
+
+def sport_of(league):
+    lg = (league or "").lower()
+    for key, (_, leagues) in SPORTS.items():
+        if lg in leagues:
+            return key
+    return "other"
+
+
 _PREFIX = re.compile(r"^([a-z0-9]+)-")
 
 

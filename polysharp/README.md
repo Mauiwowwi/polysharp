@@ -79,7 +79,7 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 ## Telegram commands
 **Everyone** (group members): `/top10 [name]`, `/wallets`, `/stats 0x…`, `/status`, `/help`
 
-**Admin only:** `/add 0x… [name]`, `/remove 0x…`, `/skip 0x… [days]`, `/suggest`, `/min 5000`, `/tier all|med|high`, `/takeronly on|off`, `/livehedges on|off`, `/mute 2h`, `/unmute`
+**Admin only:** `/topics [setup]`, `/bindtopic <sport>`, `/add 0x… [name]`, `/remove 0x…`, `/skip 0x… [days]`, `/suggest`, `/min 5000`, `/tier all|med|high`, `/takeronly on|off`, `/livehedges on|off`, `/mute 2h`, `/unmute`
 
 ## Group chat setup
 1. Add the bot to your group. To get the group's id, open the group in web.telegram.org/a; the number after `#` starts with `-100`.
@@ -88,6 +88,14 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
    - `-1001234567890,123456789` sends them to the group and your private chat.
 3. Set `ADMIN_USER_IDS` to your Telegram user id, which is the same number as your private chat id. Your private chat always accepts every command, even when it isn't an alert chat.
 4. The morning shortlist and the startup message go only to admins, by private message. Non-admins who try an admin command in the group get "🔒 Only the bot admin can do that".
+
+## Sport tabs (one group, Telegram Topics)
+1. In the group, open **Edit → Topics** and turn it on.
+2. Make Whaletail a group **admin** with the **Manage Topics** permission.
+3. Restart the bot, or send `/topics setup`. It creates 🏈 Football, ⚾ Baseball, 🏀 Basketball, 🏒 Hockey, ⚽ Soccer, 🎾 Tennis, 🥊 Fighting and 🎯 Other.
+4. Each alert posts in its sport's tab **and** in **General**, which is the "All" feed. Set `ALL_FEED=false` to post only in the sport tab.
+5. If you'd rather make the tabs yourself, run `/bindtopic football` (or baseball, basketball, hockey, soccer, tennis, fighting, other) inside each tab.
+6. Commands run inside a tab, like `/top10`, reply in that same tab.
 
 ## Settings (Railway variables, all optional)
 | Variable | Default | |
@@ -106,6 +114,7 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 | `SUGGEST_MIN_SPORTS_SHARE` | 0.8 | min share of $ in sports |
 | `SUGGEST_MAX_DAYS_INACTIVE` | 7 | days since last bet |
 | `SUGGEST_COOLDOWN_DAYS` | 3 | don't re-suggest the same wallet sooner |
+| `SPORT_TOPICS` / `ALL_FEED` | true / true | route alerts to sport tabs; also post in General |
 | `SPORTS_ONLY_ALERTS` / `PREGAME_ONLY_ALERTS` | true / true | alert-time filters |
 | `CONSENSUS_ALERT_WALLETS` | 3 | separate 🔥 message threshold |
 | `LIVE_HEDGE_ALERTS` | true | default for /livehedges |

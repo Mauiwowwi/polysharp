@@ -76,6 +76,10 @@ class Config:
     # If a WS fill isn't on /activity yet, wait this long once more before alerting
     fee_retry_seconds: float = field(default_factory=lambda: _env("FEE_RETRY_SECONDS", 6, float))
 
+    # Group with Topics enabled: alerts go to the sport's tab (+ General if ALL_FEED)
+    sport_topics: bool = field(default_factory=lambda: _env("SPORT_TOPICS", True, bool))
+    all_feed: bool = field(default_factory=lambda: _env("ALL_FEED", True, bool))
+
     # Alert-time filters: skip non-sports markets and in-game (live) fills
     sports_only_alerts: bool = field(default_factory=lambda: _env("SPORTS_ONLY_ALERTS", True, bool))
     pregame_only_alerts: bool = field(default_factory=lambda: _env("PREGAME_ONLY_ALERTS", True, bool))

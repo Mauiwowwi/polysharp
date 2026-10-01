@@ -26,6 +26,9 @@ class Telegram:
             {c for c in ids if not c.startswith("-")}
         self.admin_only = set()
         self.is_admin = False      # set per command so handlers (e.g. /help) can adapt
+        self.current_chat = self.current_thread = None
+        self.topics = {}           # chat_id -> {sport: message_thread_id}
+        self.all_feed = True       # also post every alert to the General tab
         self.http = httpx.AsyncClient(timeout=70, trust_env=True)
         self.handlers = {}
         self.callbacks = {}     # prefix -> async fn(data) for inline-button taps
@@ -33,9 +36,9 @@ class Telegram:
     async def close(self):
         await self.http.aclose()
 
-    async def send(self, text, chat_id=None, buttons=None):
+    async def send(self, text, chat_id=None, buttons=None, thread_id=None):
         """buttons: list of rows, each a list of (label, callback_data) tuples.
-        chat_id None -> broadcast to every feed chat."""
+        chat_id None -> broadcast to every feed chat. thread_id -> a forum topic."""
         if chat_id is None and len(self.chat_ids) > 1:
             for c in self.chat_ids:
                 await self.send(text, c, buttons)
@@ -44,6 +47,8 @@ class Telegram:
         for i, chunk in enumerate(chunks):
             payload = {"chat_id": chat_id or self.chat_id, "text": chunk,
                        "parse_mode": "HTML", "disable_web_page_preview": True}
+            if thread_id:
+                payload["message_thread_id"] = int(thread_id)
             if buttons and i == len(chunks) - 1:
                 payload["reply_markup"] = {"inline_keyboard": [
                     [{"text": lbl, "callback_data": data} for lbl, data in row] for row in buttons]}
@@ -63,6 +68,29 @@ class Telegram:
             except httpx.HTTPError as e:
                 log.warning("telegram send error: %s", e)
                 await asyncio.sleep(2)
+
+    async def send_alert(self, text, sport="other"):
+        """Bet alerts: every feed chat; in topic-enabled groups also the sport's tab."""
+        for c in self.chat_ids:
+            tid = (self.topics.get(c) or {}).get(sport) or (self.topics.get(c) or {}).get("other")
+            if tid:
+                await self.send(text, c, thread_id=tid)
+                if self.all_feed:
+                    await self.send(text, c)          # General tab = the "All" feed
+            else:
+                await self.send(text, c)
+
+    async def create_topic(self, chat_id, name):
+        """Returns (thread_id, error)."""
+        try:
+            r = await self.http.post(f"{self.base}/createForumTopic",
+                                     json={"chat_id": chat_id, "name": name})
+            j = r.json()
+            if j.get("ok"):
+                return j["result"]["message_thread_id"], None
+            return None, j.get("description") or f"HTTP {r.status_code}"
+        except (httpx.HTTPError, ValueError) as e:
+            return None, str(e)
 
     async def send_admins(self, text, buttons=None):
         """Private messages to each admin (they must have /start-ed the bot once)."""
@@ -90,6 +118,7 @@ class Telegram:
 
     async def _on_callback(self, cb):
         chat = str(((cb.get("message") or {}).get("chat") or {}).get("id", ""))
+        thread = (cb.get("message") or {}).get("message_thread_id")
         data = cb.get("data") or ""
         if chat not in self.chat_ids and chat not in self.admins:
             await self.answer_callback(cb.get("id"))
@@ -105,9 +134,9 @@ class Telegram:
             log.exception("callback %s failed", data)
             reply = f"⚠️ failed: {esc(e)}"
         if isinstance(reply, tuple):
-            await self.send(reply[0], chat, buttons=reply[1])
+            await self.send(reply[0], chat, buttons=reply[1], thread_id=thread)
         elif reply:
-            await self.send(reply, chat)
+            await self.send(reply, chat, thread_id=thread)
 
     async def handle_update(self, upd):
         if upd.get("callback_query"):
@@ -117,13 +146,16 @@ class Telegram:
         text = (msg.get("text") or "").strip()
         chat = str(msg.get("chat", {}).get("id", ""))
         user = str((msg.get("from") or {}).get("id", ""))
+        thread = msg.get("message_thread_id") if msg.get("is_topic_message") else None
         if not text.startswith("/") or (chat not in self.chat_ids and chat not in self.admins):
             return
         cmd, *args = text.split()
         cmd = cmd[1:].split("@")[0].lower()
         self.is_admin = user in self.admins
+        self.current_chat, self.current_thread = chat, thread
         if cmd in self.admin_only and not self.is_admin:
-            await self.send("🔒 Only the bot admin can do that. Try /top10, /wallets or /help.", chat)
+            await self.send("🔒 Only the bot admin can do that. Try /top10, /wallets or /help.", chat,
+                            thread_id=thread)
             return
         fn = self.handlers.get(cmd) or self.handlers.get("help")
         if fn is None:
@@ -134,9 +166,9 @@ class Telegram:
             log.exception("command %s failed", cmd)
             reply = f"⚠️ /{esc(cmd)} failed: {esc(e)}"
         if isinstance(reply, tuple):          # (text, buttons)
-            await self.send(reply[0], chat, buttons=reply[1])
+            await self.send(reply[0], chat, buttons=reply[1], thread_id=thread)
         elif reply:
-            await self.send(reply, chat)
+            await self.send(reply, chat, thread_id=thread)
 
     async def poll_commands(self):
         offset = None

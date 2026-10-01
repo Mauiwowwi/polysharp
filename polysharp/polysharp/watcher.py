@@ -18,7 +18,7 @@ import time
 import websockets
 
 from .fees import analyze_fill, summarize
-from .markets import is_live
+from .markets import is_live, sport_of
 from .telegram import esc
 
 log = logging.getLogger(__name__)
@@ -252,18 +252,19 @@ class Watcher:
             if self.tier_rank(score["tier"]) < self.tier_rank(self.store.get("min_tier", "all")):
                 self.below_tier += 1
                 if self.cfg.consensus_alert_wallets <= len(agree) + 1:
-                    await self._consensus(f0, agree)
+                    await self._consensus(f0, agree, sport_of((meta or {}).get("league")))
                 self.store.mark_alerted(wallet, cond, f0["asset"])
                 return
         text = self.format_alert(f0, fills, usd, shares, vwap, pos, fee, conviction, meta,
                                  hedge_vs=hedge_vs, flip_vs=flip_vs, agree=agree, oppose=oppose,
                                  tailed=tailed, live=live, score=score)
+        sport = sport_of((meta or {}).get("league"))
         if not self.muted():
-            await self.tg.send(text)
+            await self.tg.send_alert(text, sport)
             self.alerts_sent += 1
         if side == "BUY" and not is_hedge:
             self.store.mark_alerted(wallet, cond, f0["asset"])
-            await self._consensus(f0, agree)
+            await self._consensus(f0, agree, sport)
 
     async def _enrich_fees(self, fills):
         """WS fills lack usdcSize: look them up on /activity by tx hash."""
@@ -508,7 +509,7 @@ class Watcher:
             lines.pop()
         return "\n".join(lines)
 
-    async def _consensus(self, t, agree):
+    async def _consensus(self, t, agree, sport="other"):
         n = len(agree) + 1
         if n < self.cfg.consensus_alert_wallets:
             return
@@ -524,7 +525,7 @@ class Watcher:
                 f"  • {self._name(t['wallet'])} (just now)\n{who}\n"
                 f"Others hold ${total:,.0f} combined")
         if not self.muted():
-            await self.tg.send(text)
+            await self.tg.send_alert(text, sport)
 
     # --------------------------------------------------------------- websocket
     async def run_ws(self):

@@ -11,7 +11,7 @@ import websockets
 
 from .api import PolyAPI
 from .config import Config
-from .markets import Markets
+from .markets import SPORTS, Markets
 from .selector import deep_eval, passes, suggest
 from .store import Store
 from .telegram import Telegram, esc
@@ -257,6 +257,52 @@ class App:
                     f"Avg: {avg * 100:.1f}¢ ({american(avg)}) | Last: {cur * 100:.1f}¢ ({american(cur)})"]
         return "\n".join(out)
 
+    # ------------------------------------------------------------ sport topics
+    async def ensure_topics(self):
+        """Create any missing sport tabs in topic-enabled groups. Returns a status line."""
+        self.tg.all_feed = self.cfg.all_feed
+        saved = self.store.get("topics", {})
+        self.tg.topics = {c: dict(v) for c, v in saved.items()}
+        if not self.cfg.sport_topics:
+            self.tg.topics = {}
+            return "Sport topics: off"
+        notes = []
+        for chat in [c for c in self.tg.chat_ids if c.startswith("-")]:
+            have = self.tg.topics.setdefault(chat, {})
+            for key, (title, _) in SPORTS.items():
+                if key in have:
+                    continue
+                tid, err = await self.tg.create_topic(chat, title)
+                if tid:
+                    have[key] = tid
+                    continue
+                if err and "not a forum" in err.lower():
+                    notes.append("group doesn't have Topics turned on")
+                elif err and ("rights" in err.lower() or "admin" in err.lower()):
+                    notes.append("make Whaletail a group admin with 'Manage Topics'")
+                else:
+                    notes.append(err or "couldn't create topics")
+                break
+            if not have:
+                self.tg.topics.pop(chat, None)
+        self.store.set("topics", self.tg.topics)
+        ready = sum(len(v) for v in self.tg.topics.values())
+        if ready:
+            return f"Sport topics: {ready} tabs ready" + (f" (⚠️ {notes[0]})" if notes else "")
+        return "Sport topics: not set up" + (f" — {notes[0]}" if notes else "")
+
+    def topics_text(self):
+        if not self.tg.topics:
+            return ("No sport tabs yet. Turn on Topics in the group, make Whaletail an admin with "
+                    "'Manage Topics', then /topics setup. Or create tabs yourself and run "
+                    "/bindtopic &lt;sport&gt; inside each one.\nSports: " + ", ".join(SPORTS))
+        out = ["<b>Sport tabs</b>"]
+        for chat, m in self.tg.topics.items():
+            for key, (title, _) in SPORTS.items():
+                out.append(f"{title}: {'✅' if key in m else '— (goes to General)'}")
+        out.append(f"All feed in General: {'on' if self.tg.all_feed else 'off'}")
+        return "\n".join(out)
+
     # --------------------------------------------------------- morning digest
     async def morning(self, manual=False):
         if self.busy:
@@ -355,7 +401,8 @@ class App:
                         f"/suggest — shortlist now (auto daily at {cfg.suggest_time}, sent to you privately)\n"
                         "/skip 0x… [days] — hide from shortlists\n"
                         "/min 5000 · /tier all|med|high · /takeronly on|off · /livehedges on|off\n"
-                        "/mute 2h · /unmute")
+                        "/mute 2h · /unmute\n"
+                        "/topics [setup] · /bindtopic &lt;sport&gt; — sport tabs in the group")
             return out
 
         @tg.command("start")
@@ -491,6 +538,23 @@ class App:
                 return "That wallet isn't in your feed any more."
             return await self.format_top10(addr)
 
+        @tg.command("topics")
+        async def _topics(args):
+            if args and args[0].lower() == "setup":
+                return (await self.ensure_topics()) + "\n\n" + self.topics_text()
+            return self.topics_text()
+
+        @tg.command("bindtopic")
+        async def _bindtopic(args):
+            key = (args[0].lower() if args else "")
+            if key not in SPORTS:
+                return "Usage (inside a topic tab): /bindtopic " + "|".join(SPORTS)
+            if not tg.current_thread:
+                return "Run this inside the topic tab you want that sport's alerts to go to."
+            tg.topics.setdefault(tg.current_chat, {})[key] = tg.current_thread
+            st.set("topics", tg.topics)
+            return f"✅ {SPORTS[key][0]} alerts will post in this tab."
+
         @tg.command("tier")
         async def _tier(args):
             if args and args[0].lower() in ("all", "med", "medium", "high"):
@@ -522,7 +586,7 @@ class App:
                     + ("Only alerting on bundles where ≥50% was taken (fees paid)."
                        if on else "Alerting on all trades; conviction trades get ⚡."))
 
-    ADMIN_ONLY = {"add", "remove", "skip", "suggest", "refresh", "min", "tier",
+    ADMIN_ONLY = {"add", "remove", "skip", "suggest", "refresh", "min", "tier", "topics", "bindtopic",
                   "takeronly", "livehedges", "mute", "unmute"}
 
     def _wallet_buttons(self, prefix="top"):
@@ -543,6 +607,7 @@ class App:
         lines.append(f"Feed: {len(self.watcher.wallets)} wallets you added"
                      + (" (auto-picked wallets cleared — feed is manual now)" if had_auto else ""))
         lines.append(f"Shortlist: daily at {self.cfg.suggest_time} ({self.cfg.tz}) · /suggest to run now")
+        lines.append(await self.ensure_topics())
         lines.append(f"Chats: {len(self.tg.chat_ids)} · admins: {len(self.tg.admins)}"
                      + ("" if self.tg.admins else " ⚠️ set ADMIN_USER_IDS"))
         await self.tg.send_admins("🚀 <b>PolySharp online</b>\n" + "\n".join(lines))

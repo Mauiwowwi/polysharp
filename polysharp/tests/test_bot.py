@@ -23,6 +23,9 @@ class FakeTG:
     async def send(self, text, chat_id=None):
         self.sent.append(text)
 
+    async def send_alert(self, text, sport="other"):
+        self.sent.append(text)
+
 
 class FakeAPI:
     def __init__(self):

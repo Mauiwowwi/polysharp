@@ -9,7 +9,7 @@ def tg_with_handlers():
     tg = Telegram("x", f"{GROUP},{ME}", admin_ids=[ME])
     sent = []
 
-    async def fake_send(text, chat_id=None, buttons=None):
+    async def fake_send(text, chat_id=None, buttons=None, thread_id=None):
         sent.append((chat_id, text))
     tg.send = fake_send
     tg.admin_only = {"add", "remove", "mute"}

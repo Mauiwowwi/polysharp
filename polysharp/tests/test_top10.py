@@ -54,7 +54,7 @@ class TG:
     def __init__(self):
         self.sent, self.handlers, self.callbacks = [], {}, {}
 
-    async def send(self, t, chat_id=None, buttons=None):
+    async def send(self, t, chat_id=None, buttons=None, thread_id=None):
         self.sent.append((t, buttons))
 
     def command(self, n):
@@ -140,7 +140,7 @@ async def test_telegram_callback_dispatch():
     tg = Telegram("x", "42")
     sent, answered = [], []
 
-    async def fake_send(t, chat_id=None, buttons=None):
+    async def fake_send(t, chat_id=None, buttons=None, thread_id=None):
         sent.append((t, chat_id))
 
     async def fake_answer(cb_id, text=None):
