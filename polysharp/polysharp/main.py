@@ -11,7 +11,7 @@ import websockets
 
 from .api import PolyAPI
 from .config import Config
-from .markets import SPORTS, Markets
+from .markets import LEAGUES, SPORTS, Markets, sport_of
 from .selector import deep_eval, passes, suggest
 from .store import Store
 from .telegram import Telegram, esc
@@ -208,7 +208,7 @@ class App:
         other = len(rows) - len(sports)
         pool = sports if self.cfg.sports_only_alerts else rows
         pool.sort(key=lambda r: -float(r.get("initialValue") or 0))
-        return pool[:n], meta, len(pool), other
+        return (pool[:n] if n else pool), meta, len(pool), other
 
     async def trade_count(self, addr, cond, asset):
         try:
@@ -217,6 +217,34 @@ class App:
             return None
         return sum(1 for r in rows if str(r.get("asset")) == str(asset)
                    and (r.get("side") or "").upper() == "BUY")
+
+    @staticmethod
+    def position_card(i, r, m, n_trades, now, who=None, crowd=None):
+        cost = float(r.get("initialValue") or 0)
+        shares = float(r.get("size") or 0)
+        avg, cur = float(r.get("avgPrice") or 0), float(r.get("curPrice") or 0)
+        dot = "🟢" if float(r.get("cashPnl") or 0) >= 0 else "🔴"
+        when = ""
+        if m.get("game_start"):
+            if is_live(m, now):
+                when = " · 🔴 in-game"
+            elif m["game_start"] > now:
+                mins = (m["game_start"] - now) / 60
+                when = (f" · ⏳ {mins / 1440:.0f}d" if mins > 48 * 60
+                        else f" · ⏳ {int(mins // 60)}h {int(mins % 60):02d}m")
+        league = f"[{m['league'].upper()}] " if m.get("league") else ""
+        link = f"https://polymarket.com/event/{r.get('eventSlug') or r.get('slug')}"
+        lines = ["",
+                 f"<b>{i}. {dot} ${cost:,.0f}</b>" + (f" · {who}" if who else "") + when,
+                 f"{league}<a href=\"{link}\">{esc(r.get('title'))}</a>",
+                 f"Outcome: <b>{esc(pick_label(r.get('title'), r.get('outcome')))}</b>",
+                 f"Trades: {n_trades if n_trades is not None else '—'} | Shares: {shares:,.0f}",
+                 f"Cost: ${cost:,.0f} | Payout: ${shares:,.0f}",
+                 f"💰 Profit if it wins: {'+' if shares >= cost else '−'}${abs(shares - cost):,.0f}",
+                 f"Avg: {avg * 100:.1f}¢ ({american(avg)}) | Last: {cur * 100:.1f}¢ ({american(cur)})"]
+        if crowd:
+            lines.append(crowd)
+        return lines
 
     async def format_top10(self, addr):
         name = (self.watcher.wallets.get(addr) or {}).get("name") or addr[:10]
@@ -232,30 +260,86 @@ class App:
                f"${stake:,.0f} in · now {money(pnl)} · {total} open sports positions"
                + (f" (+{other} non-sports hidden)" if other else "")]
         for i, (r, n) in enumerate(zip(top, counts), 1):
-            m = meta.get(r.get("conditionId")) or {}
-            cost = float(r.get("initialValue") or 0)
-            shares = float(r.get("size") or 0)
-            avg, cur = float(r.get("avgPrice") or 0), float(r.get("curPrice") or 0)
-            dot = "🟢" if float(r.get("cashPnl") or 0) >= 0 else "🔴"
-            when = ""
-            if m.get("game_start"):
-                if is_live(m, now):
-                    when = " · 🔴 in-game"
-                elif m["game_start"] > now:
-                    mins = (m["game_start"] - now) / 60
-                    when = (f" · ⏳ {mins / 1440:.0f}d" if mins > 48 * 60
-                            else f" · ⏳ {int(mins // 60)}h {int(mins % 60):02d}m")
-            league = f"[{m['league'].upper()}] " if m.get("league") else ""
-            link = f"https://polymarket.com/event/{r.get('eventSlug') or r.get('slug')}"
-            out += ["",
-                    f"<b>{i}. {dot} ${cost:,.0f}</b>{when}",
-                    f"{league}<a href=\"{link}\">{esc(r.get('title'))}</a>",
-                    f"Outcome: <b>{esc(pick_label(r.get('title'), r.get('outcome')))}</b>",
-                    f"Trades: {n if n is not None else '—'} | Shares: {shares:,.0f}",
-                    f"Cost: ${cost:,.0f} | Payout: ${shares:,.0f}",
-                    f"💰 Profit if it wins: {'+' if shares >= cost else '−'}${abs(shares - cost):,.0f}",
-                    f"Avg: {avg * 100:.1f}¢ ({american(avg)}) | Last: {cur * 100:.1f}¢ ({american(cur)})"]
+            out += self.position_card(i, r, meta.get(r.get("conditionId")) or {}, n, now)
         return "\n".join(out)
+
+    @staticmethod
+    def parse_sport(arg):
+        """'football' -> ('sport','football'); 'nfl' -> ('league','nfl'); 'all' -> ('all',None)."""
+        a = (arg or "").strip().lower()
+        if a in ("all", "sports", "everything"):
+            return ("all", None)
+        if a in SPORTS:
+            return ("sport", a)
+        if a.rstrip("s") in SPORTS:                 # "footballs", "sports"-style plurals
+            return ("sport", a.rstrip("s"))
+        if a in LEAGUES:
+            return ("league", a)
+        return None
+
+    async def format_top10_sport(self, kind, key, n=10):
+        """Biggest open positions across ALL feed accounts, filtered by sport or league."""
+        label = ("all sports" if kind == "all" else SPORTS[key][0] if kind == "sport" else key.upper())
+        addrs = list(self.watcher.wallets)
+        results = await asyncio.gather(*(self.top_positions(a, None) for a in addrs),
+                                       return_exceptions=True)
+        rows = []
+        for addr, res in zip(addrs, results):
+            if isinstance(res, Exception):
+                log.warning("top10 sport %s failed: %s", addr, res)
+                continue
+            pool, meta, _, _ = res
+            for r in pool:
+                m = meta.get(r.get("conditionId")) or {}
+                lg = (m.get("league") or "").lower()
+                if kind == "sport" and sport_of(lg) != key:
+                    continue
+                if kind == "league" and lg != key:
+                    continue
+                rows.append((addr, r, m))
+        if not rows:
+            return f"No open {label} positions across your {len(addrs)} accounts right now."
+        by_cond = {}
+        for addr, r, m in rows:
+            by_cond.setdefault(r.get("conditionId"), []).append((addr, r))
+        rows.sort(key=lambda x: -float(x[1].get("initialValue") or 0))
+        top = rows[:n]
+        counts = await asyncio.gather(*(self.trade_count(a, r.get("conditionId"), r.get("asset"))
+                                        for a, r, _ in top))
+        now = time.time()
+        stake = sum(float(r.get("initialValue") or 0) for _, r, _ in rows)
+        accts = len({a for a, _, _ in rows})
+        out = [f"🏆 <b>Top {len(top)} {label} positions — all accounts</b>",
+               f"{len(rows)} open positions · ${stake:,.0f} in · {accts} of {len(addrs)} accounts active"]
+        for i, ((addr, r, m), cnt) in enumerate(zip(top, counts), 1):
+            name = (self.watcher.wallets.get(addr) or {}).get("name") or addr[:10]
+            others = [(a, x) for a, x in by_cond.get(r.get("conditionId"), []) if a != addr]
+            crowd = None
+            if others:
+                bits = []
+                for a, x in others:
+                    nm = esc((self.watcher.wallets.get(a) or {}).get("name") or a[:8])
+                    same = str(x.get("asset")) == str(r.get("asset"))
+                    bits.append(f"{'🤝' if same else '⚔️'} {nm} ${float(x.get('initialValue') or 0):,.0f}"
+                                + ("" if same else f" on {esc(pick_label(x.get('title'), x.get('outcome')))}"))
+                crowd = " · ".join(bits)
+            out += self.position_card(i, r, m, cnt, now, who=profile_link(addr, name), crowd=crowd)
+        return "\n".join(out)
+
+    def sport_buttons(self):
+        btns = [(title, f"tsp:{key}") for key, (title, _) in SPORTS.items()]
+        rows = [btns[i:i + 4] for i in range(0, len(btns), 4)]
+        rows.append([("🌐 All sports", "tsp:all")])
+        return rows
+
+    def thread_sport(self):
+        """Sport bound to the topic tab the current command came from, if any."""
+        thread = getattr(self.tg, "current_thread", None)
+        chat = getattr(self.tg, "current_chat", None)
+        for key, tid in ((getattr(self.tg, "topics", {}) or {}).get(chat) or {}).items():
+            if thread and int(tid) == int(thread):
+                return key
+        return None
 
     # ------------------------------------------------------------ sport topics
     async def handle_migration(self, old, new):
@@ -408,7 +492,8 @@ class App:
         @tg.command("help")
         async def _help(args):
             out = ("<b>PolySharp</b>\n"
-                   "/top10 [name] — biggest open positions (no name = pick from buttons)\n"
+                   "/top10 [name | sport | league] — biggest open positions; e.g. /top10 football, "
+                   "/top10 nfl (all accounts) or /top10 alwaysfade\n"
                    "/wallets — accounts we follow, with stats\n"
                    "/stats 0x… — check any wallet\n"
                    "/status — feed health")
@@ -540,6 +625,9 @@ class App:
             if not w.wallets:
                 return "Your feed is empty. Add one with /add 0x… name"
             if args:
+                sp = self.parse_sport(" ".join(args))
+                if sp:
+                    return await self.format_top10_sport(*sp)
                 hit = self.find_wallet(" ".join(args))
                 if isinstance(hit, str):
                     return await self.format_top10(hit)
@@ -547,7 +635,16 @@ class App:
                     return ("Which one?", [[(w.wallets[a].get("name") or a[:10], f"top:{a}")] for a in hit])
                 return (f"No wallet in your feed matches '{esc(' '.join(args))}'. Pick one:",
                         self._wallet_buttons())
-            return ("🏆 <b>Top 10 open positions</b> — tap an account:", self._wallet_buttons())
+            in_tab = self.thread_sport()
+            if in_tab and in_tab != "other":
+                return await self.format_top10_sport("sport", in_tab)
+            return ("🏆 <b>Top 10 open positions</b> — pick a sport (all accounts) or one account:",
+                    self.sport_buttons() + self._wallet_buttons())
+
+        @tg.callback("tsp")
+        async def _top_sport_cb(key):
+            sp = self.parse_sport(key)
+            return await self.format_top10_sport(*sp) if sp else "Unknown sport."
 
         @tg.callback("top")
         async def _top_cb(addr):

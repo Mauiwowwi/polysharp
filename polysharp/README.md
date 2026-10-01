@@ -77,7 +77,7 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 - Fee-free categories (geopolitics) give no signal.
 
 ## Telegram commands
-**Everyone** (group members): `/top10 [name]`, `/wallets`, `/stats 0x…`, `/status`, `/help`
+**Everyone** (group members): `/top10 [name | sport | league]` (e.g. `/top10 football` or `/top10 nfl` covers all accounts, `/top10 alwaysfade` one account; inside a sport tab plain `/top10` shows that sport), `/wallets`, `/stats 0x…`, `/status`, `/help`
 
 **Admin only:** `/topics [setup]`, `/bindtopic <sport>`, `/add 0x… [name]`, `/remove 0x…`, `/skip 0x… [days]`, `/suggest`, `/min 5000`, `/tier all|med|high`, `/takeronly on|off`, `/livehedges on|off`, `/mute 2h`, `/unmute`
 

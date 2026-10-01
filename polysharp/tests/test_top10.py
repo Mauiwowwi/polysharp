@@ -96,8 +96,9 @@ def strip(t):
 async def test_top10_no_args_shows_buttons(app):
     text, buttons = await app.tg.handlers["top10"]([])
     labels = [lbl for row in buttons for lbl, _ in row]
-    assert labels == ["177-letsgo", "alwaysfade", "HomeRunHazard"]
-    assert all(data.startswith("top:0x") for row in buttons for _, data in row)
+    assert labels[:2] == ["🏈 Football", "⚾ Baseball"] and "🌐 All sports" in labels
+    assert labels[-3:] == ["177-letsgo", "alwaysfade", "HomeRunHazard"]
+    assert all(data.startswith(("top:0x", "tsp:")) for row in buttons for _, data in row)
     assert all(len(data) <= 64 for row in buttons for _, data in row)     # Telegram limit
 
 
@@ -154,3 +155,39 @@ async def test_telegram_callback_dispatch():
     await tg._on_callback({"id": "2", "data": "top:0xabc", "message": {"chat": {"id": 99}}})  # stranger
     assert sent == [("got 0xabc", "42")] and answered == ["1", "2"]
     await tg.close()
+
+
+
+@pytest.mark.asyncio
+async def test_top10_by_sport_across_accounts(app):
+    out = strip(await app.tg.handlers["top10"](["baseball"]))
+    lines = out.split("\n")
+    assert lines[0] == "🏆 Top 10 ⚾ Baseball positions — all accounts"
+    # 12 MLB positions x 3 accounts (fixture gives everyone the same book) = 36
+    assert "36 open positions" in lines[1] and "3 of 3 accounts active" in lines[1]
+    assert "Steelers" not in out                                        # NFL filtered out
+    cards = [l for l in lines if re.match(r"\d+\. [🟢🔴]", l)]
+    assert len(cards) == 10 and "$12,000" in cards[0]
+    assert any(n in cards[0] for n in ("alwaysfade", "HomeRunHazard", "177-letsgo"))
+    assert "🤝" in out                                                   # others on the same side
+
+
+@pytest.mark.asyncio
+async def test_top10_by_league_and_all(app):
+    nfl = strip(await app.tg.handlers["top10"](["nfl"]))
+    assert nfl.startswith("🏆 Top 3 NFL positions") and "Steelers +3.5" in nfl
+    assert "Dodgers" not in nfl
+    allsp = strip(await app.tg.callbacks["tsp"]("all"))
+    assert allsp.startswith("🏆 Top 10 all sports positions") and "39 open positions" in allsp
+    none = await app.tg.handlers["top10"](["tennis"])
+    assert "No open 🎾 Tennis positions" in none
+
+
+@pytest.mark.asyncio
+async def test_top10_inside_sport_tab_defaults_to_that_sport(app):
+    app.tg.topics = {"-100": {"football": 11}}
+    app.tg.current_chat, app.tg.current_thread = "-100", 11
+    out = strip(await app.tg.handlers["top10"]([]))
+    assert out.startswith("🏆 Top 3 🏈 Football positions")
+    # a wallet name still works inside a tab
+    assert "alwaysfade — top" in strip(await app.tg.handlers["top10"](["alwaysfade"]))
