@@ -247,9 +247,11 @@ async def test_alert_layout_order(tmp_path):
     await w.ingest(spread_fill())
     await flush()
     lines = tg.sent[0].split("\n")
-    assert "HomeRunHazard" in lines[1] and lines[2] == ""                 # who, right under header
-    assert "Spread: Browns (-3.5)" in lines[3]                             # market
-    assert "<b>Steelers +3.5 @ 0.710 (-245)</b> (13,004 sh)" in lines[4]   # the actual pick
+    assert "👤" in lines[0] and "HomeRunHazard</a>" in lines[0]           # name on the header line
+    assert lines[1] == ""
+    assert "Spread: Browns (-3.5)" in lines[2]                             # market
+    assert "<b>Steelers +3.5 @ 0.710 (-245)</b> (13,004 sh)" in lines[3]   # the actual pick
+    assert "sports 1M" not in tg.sent[0] and "avg bet" not in tg.sent[0]   # no stats clutter
     assert lines[-1].startswith("📦 Now holds 25,980 sh")                  # holdings last
     assert not any("after fill" in x for x in lines)
 

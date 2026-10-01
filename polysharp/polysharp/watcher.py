@@ -407,7 +407,8 @@ class Watcher:
         pick = pick_label(t["title"], t["outcome"])
 
         # 1. who
-        lines = [f"<b>{head}</b>", self._wallet_line(t["wallet"]), ""]
+        who = f"👤 <a href=\"https://polymarket.com/profile/{t['wallet']}\">{self._name(t['wallet'])}</a>"
+        lines = [f"<b>{head}</b> {who}", ""]
         # 2. what
         lines.append(f"{league}<a href=\"{link}\">{esc(t['title'])}</a>{when}")
         lines.append(f"➡️ <b>{esc(pick)} @ {vwap:.3f} ({american(vwap)})</b> ({shares:,.0f} sh"
