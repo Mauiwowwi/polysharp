@@ -50,6 +50,7 @@ class Watcher:
         self.cfg, self.api, self.store, self.tg = cfg, api, store, tg
         self.markets = markets
         self.skipped_filtered = 0
+        self.below_tier = 0
         self.wallets = {}          # address -> {name, source, stats}
         self.bundles = {}          # key -> {"fills": [...], "task": Task}
         self.last_poll_ts = {}     # address -> last seen activity ts
@@ -167,9 +168,18 @@ class Watcher:
 
         agree, oppose = await self._crowd(f0) if side == "BUY" and not is_hedge else ([], [])
         usd = sum(f["usd"] for f in fills)
+        score = None
+        if side == "BUY" and not is_hedge:
+            score = self.conviction_score(f0, usd, pos, conviction, agree, oppose)
+            if self.tier_rank(score["tier"]) < self.tier_rank(self.store.get("min_tier", "all")):
+                self.below_tier += 1
+                if self.cfg.consensus_alert_wallets <= len(agree) + 1:
+                    await self._consensus(f0, agree)
+                self.store.mark_alerted(wallet, cond, f0["asset"])
+                return
         text = self.format_alert(f0, fills, usd, shares, vwap, pos, fee, conviction, meta,
                                  hedge_vs=hedge_vs, agree=agree, oppose=oppose,
-                                 tailed=tailed, live=live)
+                                 tailed=tailed, live=live, score=score)
         if not self.muted():
             await self.tg.send(text)
             self.alerts_sent += 1
@@ -248,6 +258,49 @@ class Watcher:
                 (agree if asset == t["asset"] else oppose).append(row)
         return agree, oppose
 
+    @staticmethod
+    def tier_rank(tier):
+        return {"all": 0, "low": 0, "LOW": 0, "med": 1, "MED": 1, "high": 2, "HIGH": 2}.get(tier, 0)
+
+    def conviction_score(self, t, usd, pos, paid_up, agree, oppose):
+        """Points for how hard this wallet is leaning in, and what the others are doing.
+
+        size vs their normal bet  ≥3× +2 · ≥1.5× +1   ("volumed out")
+        still buying              ≥2 separate buys on this side in 24h +1
+        agreement                 +1 per tracked wallet on the same side (max +2)
+        opposition                −2 if any tracked wallet holds the other side
+        paid to cross             +1 (out-of-character taker fill)
+        """
+        stats = self.wallets.get(t["wallet"], {}).get("stats") or {}
+        avg = stats.get("avg_bet") or 0
+        exposure = pos["cost"] if pos and pos.get("cost") else usd
+        mult = exposure / avg if avg else None
+        bursts, total, first = self.store.buy_bursts(t["wallet"], t["asset"], time.time() - 86400)
+        pts, why = 0, []
+        if mult is not None:
+            if mult >= 3:
+                pts += 2
+            elif mult >= 1.5:
+                pts += 1
+            why.append(f"{mult:.1f}× their usual bet")
+        if bursts >= 2:
+            pts += 1
+            hrs = (time.time() - first) / 3600 if first else 0
+            why.append(f"buy #{bursts} on this side in {hrs:.0f}h (${total:,.0f})")
+        if agree:
+            pts += min(len(agree), 2)
+            why.append(f"{len(agree)} agree")
+        if oppose:
+            pts -= 2
+            why.append(f"{len(oppose)} oppose")
+        else:
+            why.append("no opposition")
+        if paid_up:
+            pts += 1
+            why.append("paid to cross")
+        tier = "HIGH" if pts >= self.cfg.tier_high else "MED" if pts >= self.cfg.tier_med else "LOW"
+        return {"pts": pts, "tier": tier, "why": why, "mult": mult}
+
     def _name(self, addr):
         return esc(self.wallets.get(addr, {}).get("name") or addr[:8])
 
@@ -258,12 +311,15 @@ class Watcher:
         if "pnl_m" in s:
             def m(x):
                 return f"{'+' if x >= 0 else '−'}${abs(x) / 1e3:,.0f}K"
-            bits.append(f"sports 1M {m(s['pnl_m'])} · all {m(s['pnl_all'])} · "
-                        f"margin {s['margin_all']:.2%}")
+            bits.append(f"sports 1M {m(s['pnl_m'])} · all {m(s.get('pnl_overall', s['pnl_all']))}")
+            if s.get("avg_bet"):
+                bits.append(f"avg bet ${s['avg_bet'] / 1e3:,.1f}K")
+            if s.get("win_rate") is not None:
+                bits.append(f"win {s['win_rate']:.0%}")
         return " · ".join(bits)
 
     def format_alert(self, t, fills, usd, shares, vwap, pos, fee=None, conviction=False, meta=None,
-                     hedge_vs=(), agree=(), oppose=(), tailed=False, live=False):
+                     hedge_vs=(), agree=(), oppose=(), tailed=False, live=False, score=None):
         if t["side"] == "BUY" and hedge_vs:
             tag = "🛡️ HEDGE"
         elif t["side"] == "BUY":
@@ -274,6 +330,8 @@ class Watcher:
             tag = "⚡ CONVICTION " + tag
         if live:
             tag = "🔴 LIVE " + tag
+        if score:
+            tag = {"HIGH": "🔥 HIGH", "MED": "⭐ MED", "LOW": "▫️ LOW"}[score["tier"]] + " · " + tag
         verb = "BUY" if t["side"] == "BUY" else "SELL"
         head = f"{tag} {verb} · ${usd:,.0f}"
         if t["side"] == "BUY" and agree:
@@ -296,6 +354,8 @@ class Watcher:
             + (f", {len(fills)} fills)" if len(fills) > 1 else ")"),
             self._wallet_line(t["wallet"]),
         ]
+        if score:
+            lines.append(f"🎯 Conviction {score['pts']:+d}: " + " · ".join(score["why"]))
         if hedge_vs:
             for h in hedge_vs:
                 lines.append(f"🛡️ Already holds <b>{esc(h['outcome'])}</b> {h['size']:,.0f} sh "

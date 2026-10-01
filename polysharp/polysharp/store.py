@@ -122,6 +122,19 @@ class Store:
             (condition_id, since_ts)).fetchall()
         return [r["wallet"] for r in rows]
 
+    def buy_bursts(self, wallet, asset, since_ts, gap=120):
+        """Separate buying sessions on one outcome: (bursts, total_usd, first_ts)."""
+        rows = self.db.execute(
+            """SELECT ts, usd FROM trades WHERE wallet=? AND asset=? AND side='BUY' AND ts>=?
+               ORDER BY ts""", (wallet, asset, since_ts)).fetchall()
+        bursts, last, total = 0, None, 0.0
+        for r in rows:
+            if last is None or r["ts"] - last > gap:
+                bursts += 1
+            last = r["ts"]
+            total += r["usd"]
+        return bursts, total, (rows[0]["ts"] if rows else None)
+
     def mark_alerted(self, wallet, condition_id, asset):
         self.db.execute("INSERT OR REPLACE INTO alerted VALUES (?,?,?,?)",
                         (wallet, condition_id, asset, time.time()))

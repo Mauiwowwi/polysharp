@@ -7,6 +7,10 @@ import pytest
 
 from polysharp.config import Config
 from polysharp.markets import Markets, classify_gamma, is_live, parse_ts
+
+
+def iso(ts):
+    return datetime.fromtimestamp(ts, ZoneInfo('UTC')).isoformat()
 from polysharp.selector import suggest
 from polysharp.store import Store
 from polysharp.watcher import Watcher, normalize
@@ -97,6 +101,9 @@ class FakeAPI:
         vol = {"WEEK": vm / 4, "MONTH": vm, "ALL": va}[period]
         return {"pnl": pnl, "vol": vol, "rank": 10}
 
+    async def traded_count(self, user):
+        return 46 if user == SMALL else 5000
+
     async def closed_positions(self, user, max_rows=500):
         return self.data[user][0]
 
@@ -157,7 +164,7 @@ async def test_suggest_keeps_only_active_pregame_sports_volume(tmp_path):
     assert s["leagues"] == ["MLB"]
     f = summary["fails"]
     assert f["live bettor"] == 1 and f["not sports"] == 1 and f["inactive"] == 1
-    assert f["P&L/volume"] == 1 and f["already tracked/skipped"] == 1
+    assert f["too few/small bets"] == 1 and f["already tracked/skipped"] == 1   # btystu: 46 predictions
 
 
 @pytest.mark.asyncio
@@ -230,13 +237,26 @@ async def test_homerunhazard_regression(tmp_path):
                     "MONTH": {"pnl": 349281.21, "vol": 100430072.68, "rank": 26},
                     "ALL": {"pnl": 1732524.54, "vol": 380277058.39, "rank": 62}}[period]
 
+        async def traded_count(self, user):
+            return 32454
+
         async def closed_positions(self, *a, **k):
-            raise AssertionError("must not rebuild P&L from closed-position samples")
+            # 1.5 days of settled bets, 60% winners
+            return [{"asset": str(i), "realizedPnl": 100 if i % 5 < 3 else -100,
+                     "timestamp": NOW - 36 * 3600 + i} for i in range(1000)]
+
+        async def positions(self, user, market=None, redeemable=None):
+            # 99 unredeemed losers going back to May: only those ending in the window count
+            return [{"asset": f"d{i}", "curPrice": 0, "initialValue": 6000,
+                     "endDate": iso(NOW - (i * 86400 * 1.5))} for i in range(99)]
 
     c = cfg(tmp_path)
     api = API()
     s = await deep_eval(api, Markets(api, Store(c.db_path)), c, SHARP)
     assert s["pnl_m"] == 349281.21 and s["pnl_all"] == 1732524.54
     assert abs(s["margin_m"] - 0.00348) < 1e-5 and abs(s["margin_all"] - 0.00456) < 1e-5
+    assert s["predictions"] == 32454 and abs(s["avg_bet"] - 380277058.39 / 32454) < 1
+    # window = 1.5 days -> only the losers that ended in the last ~2.5 days count (2 of 99)
+    assert s["win_n"] == 1002 and abs(s["win_rate"] - 600 / 1002) < 1e-3 and s["win_days"] == 1.5
     ok, why = passes(s, c)
     assert ok, why          # profitable, big volume, margin 0.46% >= 0.2% floor

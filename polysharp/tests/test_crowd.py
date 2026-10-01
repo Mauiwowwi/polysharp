@@ -172,3 +172,54 @@ async def test_live_hedge_buy_on_tailed_position(tmp_path):
     await w.ingest(fill(A, "0x" + "q" * 64, "333", "Over", 9000, 0.5, "0xo"))
     await flush()
     assert len(tg.sent) == 1 and "🔴 LIVE 🛡️ HEDGE BUY" in tg.sent[0]
+
+
+# --- conviction score / tiers ------------------------------------------------
+@pytest.mark.asyncio
+async def test_conviction_tiers_and_tier_filter(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    w.wallets[A]["stats"] = {"avg_bet": 2000.0}
+    # A volumes out (10k sh @0.5 = $5k = 2.5x usual), buys twice, beta agrees, nobody opposes
+    api.hold(B, PRE, YES, "Dodgers", 8000, 0.48)
+    await w.ingest(fill(B, PRE, YES, "Dodgers", 8000, 0.48, "0xb"))
+    await flush()
+    tg.sent.clear()
+    api.hold(A, PRE, YES, "Dodgers", 4000, 0.5)
+    await w.ingest(fill(A, PRE, YES, "Dodgers", 4000, 0.5, "0xa1", ts=NOW - 3600))
+    await flush()
+    first = tg.sent[-1]
+    # $2k exposure = 1.0x usual (+0), 1 agree (+1) -> 1 = LOW
+    assert first.startswith("<b>▫️ LOW") and "Conviction +1" in first and "no opposition" in first
+    api.books[(A, PRE)] = []
+    api.hold(A, PRE, YES, "Dodgers", 14000, 0.5)     # now $7k exposure = 3.5x
+    await w.ingest(fill(A, PRE, YES, "Dodgers", 10000, 0.5, "0xa2"))
+    await flush()
+    second = tg.sent[-1]
+    # 3.5x (+2) + 2nd buy (+1) + 1 agree (+1) = 4 -> HIGH
+    assert second.startswith("<b>🔥 HIGH") and "3.5× their usual bet" in second
+    assert "buy #2 on this side in 1h" in second
+
+    # opposition drags it down, and /tier high hides it
+    st.set("min_tier", "high")
+    api.hold(C, PRE, NO, "Padres", 9000, 0.5)
+    await w.ingest(fill(C, PRE, NO, "Padres", 9000, 0.5, "0xc"))   # gamma: no avg -> LOW, hidden
+    await flush()
+    n = len(tg.sent)
+    api.books[(A, PRE)] = []
+    api.hold(A, PRE, YES, "Dodgers", 16000, 0.5)
+    await w.ingest(fill(A, PRE, YES, "Dodgers", 2000, 0.5, "0xa3"))
+    await flush()
+    # 4x (+2) + 3rd buy (+1) + agree (+1) + oppose (-2) = 2 -> MED -> hidden at /tier high
+    assert len(tg.sent) == n and w.below_tier == 2
+
+
+def test_win_sample_aligns_windows():
+    from polysharp.selector import win_sample
+    closed = [{"asset": str(i), "realizedPnl": 1 if i < 6 else -1, "timestamp": NOW - 86400 + i}
+              for i in range(10)]
+    dead = [{"asset": "x", "curPrice": 0, "endDate": iso(NOW - 3600)},          # in window -> loss
+            {"asset": "y", "curPrice": 0, "endDate": iso(NOW - 90 * 86400)},    # old -> ignored
+            {"asset": "1", "curPrice": 0, "endDate": iso(NOW - 3600)},          # already settled
+            {"asset": "z", "curPrice": 1, "endDate": iso(NOW - 3600)}]          # a winner
+    r = win_sample(closed, dead)
+    assert r["win_n"] == 11 and abs(r["win_rate"] - 6 / 11) < 1e-4 and r["win_days"] == 1.0

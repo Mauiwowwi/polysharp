@@ -61,9 +61,17 @@ def stat_lines(s):
     """Compact stat lines from Polymarket's own sports P&L + recent-fill style checks."""
     if not s or "pnl_m" not in s:
         return []
-    out = [f"Sports P&L: 1W {money(s['pnl_w'])} · 1M {money(s['pnl_m'])} · All {money(s['pnl_all'])}",
-           f"1M volume ${s['vol_m'] / 1e6:,.1f}M · margin {s['margin_m']:.2%} "
-           f"(all-time {s['margin_all']:.2%})"]
+    out = []
+    if s.get("predictions") is not None:
+        line = f"{s['predictions']:,} predictions · avg bet ${s.get('avg_bet', 0) / 1e3:,.1f}K"
+        if s.get("pnl_overall") is not None:
+            line += f" · overall P&L {money(s['pnl_overall'])}"
+        out.append(line)
+    out.append(f"Sports P&L: 1W {money(s['pnl_w'])} · 1M {money(s['pnl_m'])} · All {money(s['pnl_all'])}")
+    l3 = f"1M volume ${s['vol_m'] / 1e6:,.1f}M · margin {s['margin_all']:.2%}"
+    if s.get("win_rate") is not None:
+        l3 += f" · win {s['win_rate']:.0%} (last {s['win_n']:,} settled, {s['win_days']:g}d)"
+    out.append(l3)
     bits = []
     if s.get("days_since_trade") is not None:
         bits.append(f"last bet {s['days_since_trade']:.1f}d ago")
@@ -179,7 +187,8 @@ class App:
         if f:
             out.append("\n<i>Filtered out: " + ", ".join(
                 f"{v} {k}" for k, v in sorted(f.items(), key=lambda kv: -kv[1]) if v) + "</i>")
-        out.append(f"<i>Bar: sports P&L positive this month and ≥{money(cfg.min_realized_pnl)} all-time, "
+        out.append(f"<i>Bar: ≥{cfg.min_predictions} predictions, avg bet ≥${cfg.min_avg_bet:,.0f}, "
+                   f"sports P&L positive this month and ≥{money(cfg.min_realized_pnl)} all-time, "
                    f"≥${cfg.min_month_vol / 1e3:,.0f}K monthly volume, margin ≥{cfg.min_margin:.1%}, "
                    f"≥{cfg.min_sports_share:.0%} sports, "
                    f"≤{cfg.max_live_share:.0%} live, bet in last {cfg.max_days_inactive:g}d</i>")
@@ -223,6 +232,7 @@ class App:
                     "/skip 0x… [days] — hide from shortlists (default 30d)\n"
                     "<b>Alerts</b>\n"
                     "/min 5000 — minimum $ per alert\n"
+                    "/tier all|med|high — only show buys at this conviction or above\n"
                     "/takeronly on|off — only alert when they paid fees to cross\n"
                     "/livehedges on|off — in-game exits/hedges on positions you were alerted on\n"
                     "/mute 2h · /unmute\n"
@@ -242,6 +252,7 @@ class App:
             return (f"<b>Status</b> (up {up:.1f}h)\n"
                     f"Websocket: {ws} · {w.ws_msgs:,} firehose msgs\n"
                     f"Wallets: {len(w.wallets)} · alerts sent: {w.alerts_sent} · "
+                    f"below tier: {w.below_tier} · tier: {st.get('min_tier', 'all')} · "
                     f"filtered (non-sports/live): {w.skipped_filtered}\n"
                     f"Min alert: ${w.min_usd():,.0f} · sells: {'on' if cfg.alert_sells else 'off'}"
                     f" · taker-only: {'on' if st.get('taker_only', False) else 'off'}\n"
@@ -336,6 +347,18 @@ class App:
         async def _unmute(args):
             st.set("muted_until", 0)
             return "🔔 Unmuted."
+
+        @tg.command("tier")
+        async def _tier(args):
+            if args and args[0].lower() in ("all", "med", "medium", "high"):
+                st.set("min_tier", {"medium": "med"}.get(args[0].lower(), args[0].lower()))
+            cur = st.get("min_tier", "all")
+            return (f"Buy alerts shown: <b>{ {'all': 'ALL', 'med': 'MED + HIGH', 'high': 'HIGH only'}[cur] }</b>\n"
+                    "Score: size vs usual bet (≥1.5× +1, ≥3× +2) · still buying +1 · "
+                    "each agreeing wallet +1 (max 2) · any opposition −2 · paid to cross +1\n"
+                    f"🔥 HIGH ≥{cfg.tier_high} · ⭐ MED ≥{cfg.tier_med} · ▫️ LOW below\n"
+                    "Sells, exits, hedges and 🔥 CONSENSUS always come through.\n"
+                    "Usage: /tier all | med | high")
 
         @tg.command("livehedges")
         async def _livehedges(args):

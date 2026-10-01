@@ -56,6 +56,11 @@ class PolyAPI:
         return {"pnl": float(r.get("pnl") or 0), "vol": float(r.get("vol") or 0),
                 "rank": int(r.get("rank") or 0) if r else None}
 
+    async def traded_count(self, user):
+        """Number of markets the wallet has ever traded (the profile's 'Predictions')."""
+        r = await self._get("/traded", {"user": user}) or {}
+        return int(r.get("traded") or 0)
+
     async def closed_positions(self, user, max_rows=500):
         out, offset = [], 0
         while len(out) < max_rows:

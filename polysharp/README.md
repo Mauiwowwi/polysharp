@@ -8,10 +8,11 @@ Telegram alerts when proven-profitable Polymarket wallets take positions, in nea
 
 **Morning shortlist (08:00 America/Halifax by default).** The bot scans the Polymarket **sports** leaderboards (Week/Month/All-time, by P&L and by volume, top 300 each) and sends you a ranked list of wallets worth a look, each with a tap-to-copy `/add` command.
 
-Performance uses **Polymarket's own sports P&L and volume**, the same numbers as the profile page, for 1W, 1M and all-time:
-- Sports P&L positive this month and ≥$25K all-time.
-- ≥$250K sports volume this month.
-- Margin (P&L ÷ volume) ≥0.2% all-time, which drops break-even market makers.
+Wallets are judged on their **whole track record**, using Polymarket's own numbers:
+- **Predictions** (markets traded) ≥200 and **average bet** (all-time volume ÷ predictions) ≥$1,000.
+- **Sports P&L** for 1W / 1M / all-time, which must be positive this month, plus **overall P&L** ≥$25K all-time.
+- ≥$250K sports volume this month, and margin (P&L ÷ volume) ≥0.2%.
+- **Win rate**, measured on their last 1,000 settled bets plus unredeemed losers from that *same* window. The message shows how many days that covers. It's displayed but not filtered by default, because underdog bettors win under 50% and still profit; set `SUGGEST_MIN_WIN_RATE` to filter on it.
 
 Style checks come from their last 500 fills:
 - ≥80% of buying in sports markets, which drops politics, war and crypto accounts.
@@ -35,6 +36,17 @@ The same message ends with a health check on **your list**, flagging anyone who 
 - `🔥 CONSENSUS` is sent as a separate message when `CONSENSUS_ALERT_WALLETS` (default 3) of your wallets are on the same side.
 - `🛡️ HEDGE` fires when a wallet buys the other side of a market it already holds. It shows both positions and the net result either way.
 - `📉 TRIM` / `🚪 EXIT` fire when a wallet sells. They're marked `↩️` if it's a position you were alerted on.
+
+**Conviction score.** Every pre-game buy is scored and tagged 🔥 HIGH / ⭐ MED / ▫️ LOW:
+| | points |
+|---|---|
+| Position size vs their average bet: ≥1.5× / ≥3× ("volumed out") | +1 / +2 |
+| Still buying: 2nd+ separate buy on this side in 24h | +1 |
+| Each tracked wallet already on the same side (max 2) | +1 |
+| Any tracked wallet on the other side | −2 |
+| Paid to cross the spread, out of character | +1 |
+
+HIGH is ≥4 and MED is ≥2 (`TIER_HIGH`, `TIER_MED`). `/tier high` shows only HIGH buys; sells, exits, hedges and 🔥 CONSENSUS always come through.
 
 **Live.** In-game buys are never sent and never count toward agree/oppose. The one exception, toggled with `/livehedges on|off` (default on), is an in-game sell or hedge on a position you were alerted on pre-game. Those are tagged `🔴 LIVE`, so you know when a sharp is getting off something you may have tailed.
 
@@ -63,7 +75,7 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 ## Telegram commands
 - **Feed:** `/add 0x… [name]`, `/remove 0x…`, `/wallets`, `/stats 0x…`
 - **Shortlist:** `/suggest` (runs now), `/skip 0x… [days]`
-- **Alerts:** `/min 5000`, `/takeronly on|off`, `/livehedges on|off`, `/mute 2h`, `/unmute`, `/status`
+- **Alerts:** `/min 5000`, `/takeronly on|off`, `/tier all|med|high`, `/livehedges on|off`, `/mute 2h`, `/unmute`, `/status`
 
 ## Settings (Railway variables, all optional)
 | Variable | Default | |
@@ -74,6 +86,9 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 | `SUGGEST_MIN_MONTH_PNL` | 0 | sports P&L this month |
 | `SUGGEST_MIN_PNL` | 25000 | all-time sports P&L |
 | `SUGGEST_MIN_MARGIN` | 0.002 | all-time P&L ÷ volume |
+| `SUGGEST_MIN_PREDICTIONS` | 200 | markets traded |
+| `SUGGEST_MIN_AVG_BET` | 1000 | all-time volume ÷ predictions |
+| `SUGGEST_MIN_WIN_RATE` | 0 (off) | win rate filter |
 | `SUGGEST_MAX_LIVE_SHARE` | 0.25 | max share of sports $ bet in-game |
 | `SUGGEST_MIN_SPORTS_SHARE` | 0.8 | min share of $ in sports |
 | `SUGGEST_MAX_DAYS_INACTIVE` | 7 | days since last bet |

@@ -21,7 +21,7 @@ import time
 from collections import Counter
 
 from .fees import taker_baseline
-from .markets import is_live
+from .markets import is_live, parse_ts
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +60,30 @@ def trade_profile(acts, meta, now=None):
     }
 
 
+def win_sample(closed, dead, now=None):
+    """Win rate over ONE consistent window: the span covered by the settled sample.
+
+    Unredeemed losers (curPrice 0 in /positions?redeemable=true) only count if the
+    market ended inside that same window and isn't already in the settled sample.
+    """
+    now = now or time.time()
+    if not closed:
+        return {"win_rate": None, "win_n": 0, "win_days": 0}
+    start = min(int(p.get("timestamp") or now) for p in closed)
+    seen = {str(p.get("asset")) for p in closed}
+    wins = sum(1 for p in closed if float(p.get("realizedPnl") or 0) > 0)
+    losses = len(closed) - wins
+    for p in dead:
+        if float(p.get("curPrice") or 0) > 0 or str(p.get("asset")) in seen:
+            continue
+        end = parse_ts(p.get("endDate"))
+        if end and end >= start - 86400:
+            losses += 1
+    n = wins + losses
+    return {"win_rate": round(wins / n, 4) if n else None, "win_n": n,
+            "win_days": round((now - start) / 86400, 1)}
+
+
 def passes(s, cfg):
     reasons = []
     d = s.get("days_since_trade")
@@ -72,14 +96,20 @@ def passes(s, cfg):
     if "pnl_m" not in s:
         reasons.append("no P&L data")
         return False, reasons
+    if s.get("predictions", 0) < cfg.min_predictions:
+        reasons.append(f"{s.get('predictions', 0)} predictions")
+    if s.get("avg_bet", 0) < cfg.min_avg_bet:
+        reasons.append(f"avg bet ${s.get('avg_bet', 0):,.0f}")
     if s["vol_m"] < cfg.min_month_vol:
         reasons.append(f"1M vol ${s['vol_m'] / 1e3:,.0f}K")
     if s["pnl_m"] < cfg.min_month_pnl:
         reasons.append(f"1M P&L ${s['pnl_m']:,.0f}")
-    if s["pnl_all"] < cfg.min_realized_pnl:
-        reasons.append(f"all-time P&L ${s['pnl_all']:,.0f}")
+    if s.get("pnl_overall", s["pnl_all"]) < cfg.min_realized_pnl:
+        reasons.append(f"overall P&L ${s.get('pnl_overall', s['pnl_all']):,.0f}")
     if s["margin_all"] < cfg.min_margin:
         reasons.append(f"margin {s['margin_all']:.2%}")
+    if cfg.min_win_rate and (s.get("win_rate") or 0) < cfg.min_win_rate:
+        reasons.append(f"win {s.get('win_rate') or 0:.0%}")
     return not reasons, reasons
 
 
@@ -91,23 +121,36 @@ def fail_bucket(reasons):
         return "not sports"
     if r.startswith("live"):
         return "live bettor"
+    if "predictions" in r or r.startswith("avg bet"):
+        return "too few/small bets"
     return "P&L/volume"
 
 
 async def fetch_perf(api, address):
-    w, m, a = await asyncio.gather(*(api.user_pnl(address, p, "SPORTS")
-                                     for p in ("WEEK", "MONTH", "ALL")))
+    calls = [api.user_pnl(address, p, "SPORTS") for p in ("WEEK", "MONTH", "ALL")]
+    calls += [api.user_pnl(address, "ALL", "OVERALL"), api.traded_count(address)]
+    w, m, a, ov, traded = await asyncio.gather(*calls)
     return {
         "pnl_w": round(w["pnl"], 2), "pnl_m": round(m["pnl"], 2), "pnl_all": round(a["pnl"], 2),
         "vol_w": round(w["vol"], 2), "vol_m": round(m["vol"], 2), "vol_all": round(a["vol"], 2),
+        "pnl_overall": round(ov["pnl"], 2), "vol_overall": round(ov["vol"], 2),
         "margin_m": round(m["pnl"] / m["vol"], 5) if m["vol"] else 0.0,
         "margin_all": round(a["pnl"] / a["vol"], 5) if a["vol"] else 0.0,
+        "predictions": traded,
+        "avg_bet": round(ov["vol"] / traded, 2) if traded else 0.0,
         "rank_m": m["rank"], "rank_all": a["rank"],
         "score": round(m["pnl"], 2),
     }
 
 
-async def deep_eval(api, markets, cfg, address, acts=None):
+async def fetch_wins(api, cfg, address):
+    closed, dead = await asyncio.gather(
+        api.closed_positions(address, cfg.win_sample_size),
+        api.positions(address, redeemable=True))
+    return win_sample(closed, dead)
+
+
+async def deep_eval(api, markets, cfg, address, acts=None, wins=True):
     acts = acts if acts is not None else await api.activity(address, limit=500)
     slugs = {}
     for row in acts:
@@ -119,6 +162,8 @@ async def deep_eval(api, markets, cfg, address, acts=None):
     stats.update(trade_profile(acts, meta))
     tb = taker_baseline(acts)
     stats["taker_share"], stats["taker_sample"] = tb["taker_share"], tb["sample"]
+    if wins:
+        stats.update(await fetch_wins(api, cfg, address))
     return stats
 
 
@@ -169,8 +214,11 @@ async def suggest(api, markets, cfg, exclude=frozenset()):
             if not last or (time.time() - last) / 86400 > cfg.max_days_inactive:
                 fails["inactive"] += 1
                 return None
-            c["stats"] = await deep_eval(api, markets, cfg, c["address"], acts)
+            c["stats"] = await deep_eval(api, markets, cfg, c["address"], acts, wins=False)
             ok, reasons = passes(c["stats"], cfg)
+            if ok:      # win-rate sample is the expensive part: only for survivors
+                c["stats"].update(await fetch_wins(api, cfg, c["address"]))
+                ok, reasons = passes(c["stats"], cfg)
             if not ok:
                 fails[fail_bucket(reasons)] += 1
                 return None
