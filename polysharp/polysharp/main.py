@@ -93,6 +93,36 @@ def fmt_wallet(addr, w):
     return "\n".join(lines)
 
 
+def fmt_feed_wallet(addr, w):
+    """Compact 3-line card for /wallets."""
+    s = w.get("stats") or {}
+    head = f"• <b>{profile_link(addr, w.get('name'))}</b>"
+    if "pnl_m" not in s:
+        return head + "\n   (no stats yet)"
+    flags = []
+    if (s.get("days_since_trade") or 0) > 7:
+        flags.append(f"⚠️ cold {s['days_since_trade']:.0f}d")
+    if s.get("live_share", 0) > 0.5:
+        flags.append(f"⚠️ {s['live_share']:.0%} live")
+    l1 = (f"   P&L 1W {money(s['pnl_w'])} · 1M {money(s['pnl_m'])} · "
+          f"All {money(s.get('pnl_overall', s['pnl_all']))}")
+    bits = [f"{s.get('predictions', 0):,} preds", f"avg ${s.get('avg_bet', 0) / 1e3:,.1f}K"]
+    if s.get("win_rate") is not None:
+        bits.append(f"win {s['win_rate']:.0%}")
+    bits.append(f"margin {s['margin_all']:.2%}")
+    l2 = "   " + " · ".join(bits)
+    bits = []
+    if s.get("taker_share") is not None:
+        bits.append(f"taker {s['taker_share']:.0%}")
+    bits.append(f"pre-game {1 - s.get('live_share', 0):.0%}")
+    if s.get("leagues"):
+        bits.append("/".join(s["leagues"]))
+    if s.get("days_since_trade") is not None:
+        bits.append(f"last bet {s['days_since_trade']:.1f}d")
+    l3 = "   " + " · ".join(bits) + (("  " + " ".join(flags)) if flags else "")
+    return "\n".join([head, l1, l2, l3])
+
+
 def cmd_name(name):
     return re.sub(r"[^A-Za-z0-9_.-]", "", (name or "").replace(" ", "_"))[:24]
 
@@ -131,9 +161,28 @@ class App:
     async def evaluate(self, addr):
         acts = await self.api.activity(addr, limit=500)
         stats = await deep_eval(self.api, self.markets, self.cfg, addr, acts)
+        stats["as_of"] = time.time()
         name = next((a.get("name") or a.get("pseudonym") for a in acts
                      if a.get("name") or a.get("pseudonym")), None)
         return stats, name
+
+    async def refresh_stale(self, max_age_h=6, force=False):
+        """Re-score wallets whose saved stats are missing, old-format or stale."""
+        now = time.time()
+        stale = [a for a, w in self.watcher.wallets.items()
+                 if force or "pnl_m" not in (w.get("stats") or {})
+                 or now - (w.get("stats") or {}).get("as_of", 0) > max_age_h * 3600]
+
+        async def one(addr):
+            try:
+                stats, _ = await self.evaluate(addr)
+                self.store.update_stats(addr, stats)
+            except Exception as e:
+                log.warning("refresh %s failed: %s", addr, e)
+        await asyncio.gather(*(one(a) for a in stale))
+        if stale:
+            self.watcher.reload_wallets()
+        return len(stale)
 
     # --------------------------------------------------------- morning digest
     async def morning(self, manual=False):
@@ -265,11 +314,14 @@ class App:
 
         @tg.command("wallets")
         async def _wallets(args):
-            ws_ = sorted(w.wallets.items(), key=lambda kv: (kv[1].get("name") or kv[0]).lower())
-            if not ws_:
+            if not w.wallets:
                 return "Your feed is empty. Add one with /add 0x… name"
-            return (f"<b>Your feed: {len(ws_)} wallets</b>\n"
-                    + "\n".join(fmt_wallet(a, x) for a, x in ws_))
+            await self.refresh_stale(force=bool(args and args[0].lower() == "refresh"))
+            ws_ = sorted(w.wallets.items(),
+                         key=lambda kv: -((kv[1].get("stats") or {}).get("pnl_m") or 0))
+            return (f"<b>Your feed: {len(ws_)} wallets</b> (sorted by 1M sports P&L)\n\n"
+                    + "\n\n".join(fmt_feed_wallet(a, x) for a, x in ws_)
+                    + "\n\n<i>Stats refresh every 6h · /wallets refresh to force</i>")
 
         @tg.command("stats")
         async def _stats(args):

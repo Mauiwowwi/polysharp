@@ -260,3 +260,16 @@ async def test_homerunhazard_regression(tmp_path):
     assert s["win_n"] == 1002 and abs(s["win_rate"] - 600 / 1002) < 1e-3 and s["win_days"] == 1.5
     ok, why = passes(s, c)
     assert ok, why          # profitable, big volume, margin 0.46% >= 0.2% floor
+
+
+def test_feed_wallet_card():
+    import re
+    from polysharp.main import fmt_feed_wallet
+    s = {"pnl_w": 615e3, "pnl_m": 1.12e6, "pnl_all": 431e3, "pnl_overall": 447e3, "predictions": 135618,
+         "avg_bet": 2100, "win_rate": 0.69, "margin_all": 0.0015, "taker_share": 1.0,
+         "live_share": 0.54, "leagues": ["ATP", "WTA"], "days_since_trade": 9.0}
+    card = re.sub(r"<[^>]+>", "", fmt_feed_wallet("0xabc", {"name": "UpTheBlues", "stats": s}))
+    assert "P&L 1W +$615K · 1M +$1.12M · All +$447K" in card
+    assert "135,618 preds · avg $2.1K · win 69%" in card and "taker 100%" in card
+    assert "⚠️ cold 9d" in card and "⚠️ 54% live" in card
+    assert "no stats yet" in fmt_feed_wallet("0xabc", {"name": "x", "stats": {"n": 5}})
