@@ -210,32 +210,51 @@ class App:
         pool.sort(key=lambda r: -float(r.get("initialValue") or 0))
         return pool[:n], meta, len(pool), other
 
+    async def trade_count(self, addr, cond, asset):
+        try:
+            rows = await self.api.activity(addr, limit=500, market=cond)
+        except Exception:
+            return None
+        return sum(1 for r in rows if str(r.get("asset")) == str(asset)
+                   and (r.get("side") or "").upper() == "BUY")
+
     async def format_top10(self, addr):
         name = (self.watcher.wallets.get(addr) or {}).get("name") or addr[:10]
         top, meta, total, other = await self.top_positions(addr)
         if not top:
             return f"{profile_link(addr, name)} has no open sports positions right now."
+        counts = await asyncio.gather(*(self.trade_count(addr, r.get("conditionId"), r.get("asset"))
+                                        for r in top))
         now = time.time()
         stake = sum(float(r.get("initialValue") or 0) for r in top)
         pnl = sum(float(r.get("cashPnl") or 0) for r in top)
         out = [f"🏆 <b>{profile_link(addr, name)} — top {len(top)} open positions</b>",
                f"${stake:,.0f} in · now {money(pnl)} · {total} open sports positions"
-               + (f" (+{other} non-sports hidden)" if other else ""), ""]
-        for i, r in enumerate(top, 1):
+               + (f" (+{other} non-sports hidden)" if other else "")]
+        for i, (r, n) in enumerate(zip(top, counts), 1):
             m = meta.get(r.get("conditionId")) or {}
-            league = f"[{m['league'].upper()}] " if m.get("league") else ""
-            gs = m.get("game_start")
-            when = ""
-            if gs:
-                mins = (gs - now) / 60
-                when = (" · 🔴 in-game" if is_live(m, now) else
-                        f" · ⏳ {int(mins // 60)}h {int(mins % 60):02d}m" if mins >= 0 else "")
+            cost = float(r.get("initialValue") or 0)
+            shares = float(r.get("size") or 0)
             avg, cur = float(r.get("avgPrice") or 0), float(r.get("curPrice") or 0)
+            dot = "🟢" if float(r.get("cashPnl") or 0) >= 0 else "🔴"
+            when = ""
+            if m.get("game_start"):
+                if is_live(m, now):
+                    when = " · 🔴 in-game"
+                elif m["game_start"] > now:
+                    mins = (m["game_start"] - now) / 60
+                    when = (f" · ⏳ {mins / 1440:.0f}d" if mins > 48 * 60
+                            else f" · ⏳ {int(mins // 60)}h {int(mins % 60):02d}m")
+            league = f"[{m['league'].upper()}] " if m.get("league") else ""
             link = f"https://polymarket.com/event/{r.get('eventSlug') or r.get('slug')}"
-            out.append(f"<b>{i}.</b> {league}<a href=\"{link}\">{esc(r.get('title'))}</a>{when}")
-            out.append(f"   <b>{esc(pick_label(r.get('title'), r.get('outcome')))} @ {avg:.3f} "
-                       f"({american(avg)})</b> · ${float(r.get('initialValue') or 0):,.0f}")
-            out.append(f"   now {cur:.3f} ({american(cur)}) · {money(float(r.get('cashPnl') or 0))}")
+            out += ["",
+                    f"<b>{i}. {dot} ${cost:,.0f}</b>{when}",
+                    f"{league}<a href=\"{link}\">{esc(r.get('title'))}</a>",
+                    f"Outcome: <b>{esc(pick_label(r.get('title'), r.get('outcome')))}</b>",
+                    f"Trades: {n if n is not None else '—'} | Shares: {shares:,.0f}",
+                    f"Cost: ${cost:,.0f} | Payout: ${shares:,.0f}",
+                    f"💰 Profit if it wins: {'+' if shares >= cost else '−'}${abs(shares - cost):,.0f}",
+                    f"Avg: {avg * 100:.1f}¢ ({american(avg)}) | Last: {cur * 100:.1f}¢ ({american(cur)})"]
         return "\n".join(out)
 
     # --------------------------------------------------------- morning digest

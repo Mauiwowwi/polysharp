@@ -76,3 +76,36 @@ async def test_broadcast_and_admin_dm():
     await tg.send_admins("shortlist")           # digest -> only me
     assert posted == [GROUP, ME, ME]
     await tg.close()
+
+
+@pytest.mark.asyncio
+async def test_alerts_group_only_admin_controls_in_dm():
+    """TELEGRAM_CHAT_ID=<group>, ADMIN_USER_IDS=<me>: alerts only hit the group,
+    while my private chat still runs every command and gets the shortlist."""
+    tg = Telegram("x", GROUP, admin_ids=[ME])
+    posted = []
+
+    async def fake_post(payload):
+        posted.append((payload["chat_id"], payload["text"]))
+    tg._post_message = fake_post
+    tg.admin_only = {"add"}
+
+    @tg.command("add")
+    async def _a(args):
+        return "added"
+
+    @tg.command("top10")
+    async def _t(args):
+        return "top list"
+
+    await tg.send("🟢 NEW BUY alert")                         # bet alert
+    await tg.send_admins("☀️ shortlist")                       # morning digest
+    await tg.handle_update(msg(ME, ME, "/add 0xabc"))          # admin cmd from my DM
+    await tg.handle_update(msg(ME, ME, "/top10"))
+    await tg.handle_update(msg(GROUP, FRIEND, "/add 0xabc"))   # friend in group: locked
+    assert posted[0] == (GROUP, "🟢 NEW BUY alert")
+    assert posted[1] == (ME, "☀️ shortlist")
+    assert posted[2] == (ME, "added") and posted[3] == (ME, "top list")
+    assert posted[4][0] == GROUP and "Only the bot admin" in posted[4][1]
+    assert not any(c == ME and "BUY" in t for c, t in posted)   # no alerts in my DM
+    await tg.close()

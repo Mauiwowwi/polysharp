@@ -80,10 +80,12 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 **Admin only:** `/add 0x… [name]`, `/remove 0x…`, `/skip 0x… [days]`, `/suggest`, `/min 5000`, `/tier all|med|high`, `/takeronly on|off`, `/livehedges on|off`, `/mute 2h`, `/unmute`
 
 ## Group chat setup
-1. Add the bot to your group. To get the group's id, add it, send a message, then check `getUpdates`; group ids start with `-100`.
-2. Set `TELEGRAM_CHAT_ID` to the group id **and** your private chat id, comma-separated: `-1001234567890,123456789`. Alerts go to both, and commands work in both.
-3. Set `ADMIN_USER_IDS` to your Telegram user id. That's the same number as your private chat id.
-4. Non-admins who try an admin command get "🔒 Only the bot admin can do that". The morning shortlist and the startup message go only to admins, by private message.
+1. Add the bot to your group. To get the group's id, open the group in web.telegram.org/a; the number after `#` starts with `-100`.
+2. Set `TELEGRAM_CHAT_ID` to where **bet alerts** go:
+   - `-1001234567890` sends alerts to the group only, which is the usual setup.
+   - `-1001234567890,123456789` sends them to the group and your private chat.
+3. Set `ADMIN_USER_IDS` to your Telegram user id, which is the same number as your private chat id. Your private chat always accepts every command, even when it isn't an alert chat.
+4. The morning shortlist and the startup message go only to admins, by private message. Non-admins who try an admin command in the group get "🔒 Only the bot admin can do that".
 
 ## Settings (Railway variables, all optional)
 | Variable | Default | |

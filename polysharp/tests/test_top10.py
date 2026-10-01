@@ -16,7 +16,7 @@ def iso(ts):
 
 def pos(i, title, outcome, cost, avg, cur, slug, redeemable=False):
     size = cost / avg
-    return {"conditionId": f"0x{i:064x}", "title": title, "outcome": outcome, "size": size,
+    return {"conditionId": f"0x{i:064x}", "asset": str(i), "title": title, "outcome": outcome, "size": size,
             "avgPrice": avg, "initialValue": cost, "curPrice": cur, "cashPnl": size * cur - cost,
             "redeemable": redeemable, "eventSlug": slug}
 
@@ -30,6 +30,10 @@ class API:
         rows += [pos(10 + i, f"Dodgers vs. Padres {i}", "Dodgers", 1000 * (i + 1), 0.5, 0.52,
                      f"mlb-lad-sd-{i}") for i in range(12)]
         return rows
+
+    async def activity(self, user, start=None, limit=100, market=None):
+        n = int(market, 16)
+        return [{"asset": str(n), "side": "BUY"}] * (102 if n == 1 else 3) + [{"asset": "other", "side": "BUY"}]
 
     async def gamma_markets(self, cids):
         out = []
@@ -102,10 +106,19 @@ async def test_top10_by_name_and_button(app):
     out = strip(await app.tg.handlers["top10"](["alwaysfade"]))
     lines = out.split("\n")
     assert "alwaysfade — top 10 open positions" in lines[0]
-    assert "Steelers +3.5 @ 0.710 (-245) · $27,868" in out                 # biggest open sports
+    # card for the biggest open sports position
+    i = lines.index(next(l for l in lines if l.startswith("1. ")))
+    card = lines[i:i + 7]
+    assert card[0].startswith("1. 🔴 $27,868")
+    assert card[1] == "[NFL] Spread: Browns (-3.5)"
+    assert card[2] == "Outcome: Steelers +3.5"
+    assert card[3] == "Trades: 102 | Shares: 39,262"
+    assert card[4] == "Cost: $27,868 | Payout: $39,262"
+    assert card[5] == "💰 Profit if it wins: +$11,394"
+    assert card[6] == "Avg: 71.0¢ (-245) | Last: 70.5¢ (-239)"
     assert "Orioles" not in out and "election" not in out                  # resolved / non-sports out
     assert "+1 non-sports hidden" in out and "13 open sports positions" in out
-    assert sum(1 for l in lines if re.match(r"\d+\. ", l)) == 10
+    assert sum(1 for l in lines if re.match(r"\d+\. [🟢🔴]", l)) == 10
     assert "⏳ 0h 59m" in out or "⏳ 1h 00m" in out
     assert "🔴 in-game" in out
     # same result through the button

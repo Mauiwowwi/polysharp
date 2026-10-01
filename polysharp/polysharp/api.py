@@ -83,9 +83,11 @@ class PolyAPI:
             params["redeemable"] = str(bool(redeemable)).lower()
         return await self._get("/positions", params) or []
 
-    async def activity(self, user, start=None, limit=100):
+    async def activity(self, user, start=None, limit=100, market=None):
         params = {"user": user, "type": "TRADE", "limit": limit,
                   "sortBy": "TIMESTAMP", "sortDirection": "DESC"}
+        if market:
+            params["market"] = market
         if start:
             params["start"] = int(start)
         return await self._get("/activity", params) or []
