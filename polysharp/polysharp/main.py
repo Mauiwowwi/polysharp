@@ -258,11 +258,23 @@ class App:
         return "\n".join(out)
 
     # ------------------------------------------------------------ sport topics
+    async def handle_migration(self, old, new):
+        m = self.store.get("chat_migrations", {})
+        m[old] = new
+        self.store.set("chat_migrations", m)
+        self.store.set("topics", self.tg.topics)
+        await self.tg.send_admins(
+            f"ℹ️ Telegram upgraded your group to a supergroup (that happens when Topics is turned on). "
+            f"New chat id: <code>{new}</code>\nThe bot has switched over automatically. Please also set "
+            f"<code>TELEGRAM_CHAT_ID</code> in Railway to <code>{new}</code> so it sticks.")
+
     async def ensure_topics(self):
         """Create any missing sport tabs in topic-enabled groups. Returns a status line."""
         self.tg.all_feed = self.cfg.all_feed
         saved = self.store.get("topics", {})
         self.tg.topics = {c: dict(v) for c, v in saved.items()}
+        self.tg.on_migrate = self.handle_migration
+        self.tg.apply_migrations(self.store.get("chat_migrations", {}))
         if not self.cfg.sport_topics:
             self.tg.topics = {}
             return "Sport topics: off"
@@ -273,6 +285,10 @@ class App:
                 if key in have:
                     continue
                 tid, err = await self.tg.create_topic(chat, title)
+                if self.tg.resolve(chat) != chat:          # group id changed mid-setup
+                    have = self.tg.topics.setdefault(self.tg.resolve(chat), have)
+                    self.tg.topics.pop(chat, None)
+                    chat = self.tg.resolve(chat)
                 if tid:
                     have[key] = tid
                     continue

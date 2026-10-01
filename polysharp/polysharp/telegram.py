@@ -29,6 +29,8 @@ class Telegram:
         self.current_chat = self.current_thread = None
         self.topics = {}           # chat_id -> {sport: message_thread_id}
         self.all_feed = True       # also post every alert to the General tab
+        self.migrations = {}       # old group id -> new supergroup id (Telegram upgrades)
+        self.on_migrate = None     # async fn(old, new) so the app can persist + notify
         self.http = httpx.AsyncClient(timeout=70, trust_env=True)
         self.handlers = {}
         self.callbacks = {}     # prefix -> async fn(data) for inline-button taps
@@ -44,8 +46,9 @@ class Telegram:
                 await self.send(text, c, buttons)
             return
         chunks = _chunks(text, 3900)
+        target = self.resolve(chat_id or self.chat_id)
         for i, chunk in enumerate(chunks):
-            payload = {"chat_id": chat_id or self.chat_id, "text": chunk,
+            payload = {"chat_id": target, "text": chunk,
                        "parse_mode": "HTML", "disable_web_page_preview": True}
             if thread_id:
                 payload["message_thread_id"] = int(thread_id)
@@ -63,6 +66,10 @@ class Telegram:
                     await asyncio.sleep(wait)
                     continue
                 if r.status_code != 200:
+                    new = await self._check_migration(payload["chat_id"], r)
+                    if new:
+                        payload["chat_id"] = new
+                        continue
                     log.warning("telegram send %s: %s", r.status_code, r.text[:200])
                 break
             except httpx.HTTPError as e:
@@ -83,14 +90,49 @@ class Telegram:
     async def create_topic(self, chat_id, name):
         """Returns (thread_id, error)."""
         try:
+            chat_id = self.resolve(chat_id)
             r = await self.http.post(f"{self.base}/createForumTopic",
                                      json={"chat_id": chat_id, "name": name})
             j = r.json()
+            new = await self._check_migration(chat_id, r)
+            if new:
+                r = await self.http.post(f"{self.base}/createForumTopic",
+                                         json={"chat_id": new, "name": name})
+                j = r.json()
             if j.get("ok"):
                 return j["result"]["message_thread_id"], None
             return None, j.get("description") or f"HTTP {r.status_code}"
         except (httpx.HTTPError, ValueError) as e:
             return None, str(e)
+
+    def resolve(self, chat_id):
+        chat_id = str(chat_id)
+        return self.migrations.get(chat_id, chat_id)
+
+    def apply_migrations(self, mapping):
+        """Swap upgraded group ids everywhere (chat list, topic map)."""
+        for old, new in mapping.items():
+            self.migrations[str(old)] = str(new)
+            self.chat_ids = [str(new) if c == str(old) else c for c in self.chat_ids]
+            if str(old) in self.topics and str(new) not in self.topics:
+                self.topics[str(new)] = self.topics.pop(str(old))
+        self.chat_id = self.chat_ids[0] if self.chat_ids else ""
+
+    async def _check_migration(self, chat_id, r):
+        """Telegram says 'group chat was upgraded to a supergroup' -> switch to the new id."""
+        try:
+            new = ((r.json() or {}).get("parameters") or {}).get("migrate_to_chat_id")
+        except ValueError:
+            return None
+        if not new:
+            return None
+        old, new = str(chat_id), str(new)
+        if self.migrations.get(old) != new:
+            log.warning("group %s was upgraded to supergroup %s", old, new)
+            self.apply_migrations({old: new})
+            if self.on_migrate:
+                await self.on_migrate(old, new)
+        return new
 
     async def send_admins(self, text, buttons=None):
         """Private messages to each admin (they must have /start-ed the bot once)."""

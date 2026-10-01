@@ -109,3 +109,54 @@ async def test_bindtopic_inside_a_tab(app):
                                             "is_topic_message": True}})
     assert app.tg.topics[GROUP]["soccer"] == 42 and app.store.get("topics")[GROUP]["soccer"] == 42
     assert sent[-1][1] == 42 and "Soccer alerts will post in this tab" in sent[-1][2]
+
+
+OLD, NEW = "-4991234567", "-1002991234567"
+
+
+def migrating_transport(log):
+    import json as _json
+
+    import httpx
+
+    def handler(request):
+        body = _json.loads(request.content or b"{}")
+        log.append((request.url.path.rsplit("/", 1)[-1], str(body.get("chat_id"))))
+        if str(body.get("chat_id")) == OLD:
+            return httpx.Response(400, json={"ok": False, "error_code": 400,
+                                             "description": "Bad Request: group chat was upgraded to a supergroup chat",
+                                             "parameters": {"migrate_to_chat_id": int(NEW)}})
+        if request.url.path.endswith("createForumTopic"):
+            return httpx.Response(200, json={"ok": True, "result": {"message_thread_id": 500 + len(log)}})
+        return httpx.Response(200, json={"ok": True, "result": {}})
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.asyncio
+async def test_supergroup_migration_is_followed(tmp_path, monkeypatch):
+    import httpx
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "x")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", OLD)
+    monkeypatch.setenv("ADMIN_USER_IDS", ME)
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "m.db"))
+    from polysharp.main import App
+    app = App()
+    calls = []
+    app.tg.http = httpx.AsyncClient(transport=migrating_transport(calls))
+    line = await app.ensure_topics()
+    assert line == f"Sport topics: {len(SPORTS)} tabs ready"
+    assert app.tg.chat_ids == [NEW] and NEW in app.tg.topics and OLD not in app.tg.topics
+    assert app.store.get("chat_migrations") == {OLD: NEW}
+    # admin was told the new id
+    assert any(m == ("sendMessage", ME) for m in calls)
+    # alerts now go to the new group
+    calls.clear()
+    await app.tg.send_alert("NFL bet", "football")
+    assert all(chat == NEW for _, chat in calls) and len(calls) == 2
+    # a restart with the OLD env var still lands on the new id
+    app2 = App()
+    app2.tg.http = httpx.AsyncClient(transport=migrating_transport([]))
+    await app2.ensure_topics()
+    assert app2.tg.chat_ids == [NEW]
+    await app.tg.close()
+    await app2.tg.close()
