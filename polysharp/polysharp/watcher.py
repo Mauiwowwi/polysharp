@@ -187,8 +187,10 @@ class Watcher:
 
         book = await self._wallet_book(wallet, cond)          # this wallet's holdings in the market
         pos = book.get(f0["asset"]) if book is not None else None
-        hedge_vs = [p for a, p in (book or {}).items() if a != f0["asset"] and p["size"] >= 1]
-        is_hedge = side == "BUY" and bool(hedge_vs)
+        hedge_vs, flip_vs = self.classify_other_side(book, f0["asset"], pos, sum(f["usd"] for f in fills))
+        if side != "BUY":
+            hedge_vs, flip_vs = [], []
+        is_hedge = bool(hedge_vs)
         if live and self.cfg.pregame_only_alerts and side == "BUY" and not is_hedge:
             self.skipped_filtered += 1
             return
@@ -212,7 +214,7 @@ class Watcher:
                 self.store.mark_alerted(wallet, cond, f0["asset"])
                 return
         text = self.format_alert(f0, fills, usd, shares, vwap, pos, fee, conviction, meta,
-                                 hedge_vs=hedge_vs, agree=agree, oppose=oppose,
+                                 hedge_vs=hedge_vs, flip_vs=flip_vs, agree=agree, oppose=oppose,
                                  tailed=tailed, live=live, score=score)
         if not self.muted():
             await self.tg.send(text)
@@ -275,6 +277,22 @@ class Watcher:
                 "size": float(r.get("size") or 0), "avg": float(r.get("avgPrice") or 0),
                 "cost": float(r.get("initialValue") or 0), "outcome": r.get("outcome") or ""}
         return out
+
+    def classify_other_side(self, book, asset, pos, usd):
+        """Split the wallet's holdings on the OTHER outcome into (hedge_vs, flip_vs).
+
+        dust  (< HEDGE_DUST_PCT of this side, or < $50): ignored -> plain NEW/ADD
+        other side >= this side:                         HEDGE (protecting it)
+        other side meaningful but now smaller:           FLIP (moved weight across)
+        """
+        other = [p for a, p in (book or {}).items() if a != asset and p["size"] >= 1]
+        this_cost = (pos or {}).get("cost") or usd
+        opp_cost = sum(p["cost"] for p in other)
+        if not other or opp_cost < max(50.0, self.cfg.hedge_dust_pct * this_cost):
+            return [], []
+        if this_cost <= opp_cost:
+            return other, []
+        return [], other
 
     async def _crowd(self, t):
         """Other tracked wallets currently holding either side of this market."""
@@ -344,7 +362,9 @@ class Watcher:
         bits = [f"👤 <a href=\"https://polymarket.com/profile/{addr}\">{self._name(addr)}</a>"]
         if "pnl_m" in s:
             def m(x):
-                return f"{'+' if x >= 0 else '−'}${abs(x) / 1e3:,.0f}K"
+                a = abs(x)
+                v = f"${a / 1e6:,.2f}M" if a >= 1e6 else f"${a / 1e3:,.0f}K" if a >= 1e3 else f"${a:,.0f}"
+                return ("+" if x >= 0 else "−") + v
             bits.append(f"sports 1M {m(s['pnl_m'])} · all {m(s.get('pnl_overall', s['pnl_all']))}")
             if s.get("avg_bet"):
                 bits.append(f"avg bet ${s['avg_bet'] / 1e3:,.1f}K")
@@ -353,9 +373,12 @@ class Watcher:
         return " · ".join(bits)
 
     def format_alert(self, t, fills, usd, shares, vwap, pos, fee=None, conviction=False, meta=None,
-                     hedge_vs=(), agree=(), oppose=(), tailed=False, live=False, score=None):
+                     hedge_vs=(), agree=(), oppose=(), tailed=False, live=False, score=None,
+                     flip_vs=()):
         if t["side"] == "BUY" and hedge_vs:
             tag = "🛡️ HEDGE"
+        elif t["side"] == "BUY" and flip_vs:
+            tag = "🔄 FLIP"
         elif t["side"] == "BUY":
             tag = "🟢 NEW" if pos and pos["size"] <= shares * 1.05 else "🟢 ADD"
         else:
@@ -419,6 +442,10 @@ class Watcher:
                 outs += [f"{esc(pick_label(t['title'], h['outcome']))} wins "
                          f"{h['size'] - total_cost:+,.0f}" for h in hedge_vs]
                 lines.append("📐 Net after hedge: " + " · ".join(outs))
+        for fv in flip_vs:
+            lines.append(f"🔄 Was on <b>{esc(pick_label(t['title'], fv['outcome']))}</b> "
+                         f"{fv['size']:,.0f} sh @ {fv['avg']:.3f} ({american(fv['avg'])}) · "
+                         f"${fv['cost']:,.0f} — now bigger on {esc(pick)}")
         if t["side"] == "SELL" and tailed:
             lines.append("↩️ Getting off a position we alerted you on")
         # 4. where they stand now (bottom)

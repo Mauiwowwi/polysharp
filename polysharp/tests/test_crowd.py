@@ -252,3 +252,41 @@ async def test_alert_layout_order(tmp_path):
     assert "<b>Steelers +3.5 @ 0.710 (-245)</b> (13,004 sh)" in lines[4]   # the actual pick
     assert lines[-1].startswith("📦 Now holds 25,980 sh")                  # holdings last
     assert not any("after fill" in x for x in lines)
+
+
+@pytest.mark.asyncio
+async def test_dust_on_other_side_is_not_a_hedge(tmp_path):
+    """UpTheBlues: 14 sh of Under ($7) left over, buys 2,152 sh of Over -> plain buy."""
+    c, api, st, tg, w = setup(tmp_path)
+    api.hold(A, PRE, NO, "Under", 14, 0.5)
+    api.hold(A, PRE, YES, "Over", 3813, 0.508)
+
+    def f():
+        x = fill(A, PRE, YES, "Over", 2152, 0.51, "0xd")
+        x["title"] = "Germany vs. Serbia: O/U 3.5"
+        return x
+    await w.ingest(f())
+    await flush()
+    m = tg.sent[0]
+    assert "HEDGE" not in m and "Already holds" not in m and "Net after hedge" not in m
+    assert "🟢 ADD BUY" in m and "<b>Over 3.5 @ 0.510 (-104)</b>" in m
+    assert "Conviction" in m        # scored like any normal buy
+
+
+@pytest.mark.asyncio
+async def test_flip_when_new_side_outweighs_old(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    api.hold(A, PRE, NO, "Padres", 6000, 0.5)          # $3,000 on Padres
+    api.hold(A, PRE, YES, "Dodgers", 20000, 0.5)       # now $10,000 on Dodgers
+    await w.ingest(fill(A, PRE, YES, "Dodgers", 20000, 0.5, "0xf"))
+    await flush()
+    m = tg.sent[0]
+    assert "🔄 FLIP BUY" in m and "Was on <b>Padres</b> 6,000 sh" in m and "now bigger on Dodgers" in m
+    assert "Conviction" in m and "HEDGE" not in m
+
+
+def test_money_format_on_wallet_line(tmp_path):
+    c, api, st, tg, w = setup(tmp_path)
+    w.wallets[A]["stats"] = {"pnl_m": 1116000, "pnl_all": 447000, "pnl_overall": 447000}
+    line = w._wallet_line(A)
+    assert "1M +$1.12M" in line and "all +$447K" in line

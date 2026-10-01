@@ -59,6 +59,8 @@ class Config:
     # Conviction tiers for BUY alerts (points; see watcher.conviction_score)
     tier_high: int = field(default_factory=lambda: _env("TIER_HIGH", 4, int))
     tier_med: int = field(default_factory=lambda: _env("TIER_MED", 2, int))
+    # Other-side holdings smaller than this share of the new side are dust (not a hedge)
+    hedge_dust_pct: float = field(default_factory=lambda: _env("HEDGE_DUST_PCT", 0.10, float))
     # Separate 🔥 message when this many of your wallets hold the same side
     consensus_alert_wallets: int = field(default_factory=lambda: _env("CONSENSUS_ALERT_WALLETS", 3, int))
     # How far back to look for other wallets' trades in the same market (holdings re-checked live)
