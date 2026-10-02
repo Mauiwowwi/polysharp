@@ -148,7 +148,7 @@ async def test_hedge_pregame(tmp_path):
 
 @pytest.mark.asyncio
 async def test_live_exit_on_tailed_position_only(tmp_path):
-    c, api, st, tg, w = setup(tmp_path)
+    c, api, st, tg, w = setup(tmp_path, live_hedge_alerts=True)
     st.mark_alerted(A, LIVE, YES)                      # we alerted A's Dodgers buy pre-game
     api.hold(A, LIVE, YES, "Dodgers", 2000, 0.5)       # still holds a bit after selling
     await w.ingest(fill(A, LIVE, YES, "Dodgers", 8000, 0.7, "0xs", side="SELL"))
@@ -165,7 +165,7 @@ async def test_live_exit_on_tailed_position_only(tmp_path):
 
 @pytest.mark.asyncio
 async def test_live_hedge_buy_on_tailed_position(tmp_path):
-    c, api, st, tg, w = setup(tmp_path)
+    c, api, st, tg, w = setup(tmp_path, live_hedge_alerts=True)
     st.mark_alerted(A, LIVE, YES)
     api.hold(A, LIVE, YES, "Dodgers", 10000, 0.5)
     api.hold(A, LIVE, NO, "Padres", 9000, 0.3)
@@ -411,3 +411,16 @@ async def test_agree_found_even_if_bot_never_saw_their_trade(tmp_path):
     msg = tg.sent[0]
     assert "🤝 AGREES ×1" in msg
     assert "🤝 beta also on Dodgers: 220 sh @ 0.280 (+257) · $62" in msg
+
+
+@pytest.mark.asyncio
+async def test_no_live_posts_by_default(tmp_path):
+    """Default: nothing in-game is posted, not even hedges/exits on tailed positions."""
+    c, api, st, tg, w = setup(tmp_path)
+    st.mark_alerted(A, LIVE, YES)
+    api.hold(A, LIVE, YES, "Dodgers", 10000, 0.5)
+    api.hold(A, LIVE, NO, "Padres", 9000, 0.3)
+    await w.ingest(fill(A, LIVE, NO, "Padres", 9000, 0.3, "0xh"))
+    await w.ingest(fill(A, LIVE, YES, "Dodgers", 8000, 0.7, "0xs", side="SELL"))
+    await flush()
+    assert tg.sent == []

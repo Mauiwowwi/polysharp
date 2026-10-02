@@ -71,7 +71,7 @@ class Config:
     # Smallest holding by another tracked wallet that still shows as 🤝 agree / ⚔️ oppose
     crowd_min_usd: float = field(default_factory=lambda: _env("CROWD_MIN_USD", 50, float))
     # Let in-game SELLs / hedge-buys through, but only on positions you were alerted on pre-game
-    live_hedge_alerts: bool = field(default_factory=lambda: _env("LIVE_HEDGE_ALERTS", True, bool))
+    live_hedge_alerts: bool = field(default_factory=lambda: _env("LIVE_HEDGE_ALERTS", False, bool))
     # Conviction = this bundle >= X% taker, from a wallet that is normally <= Y% taker
     conviction_min_taker: float = field(default_factory=lambda: _env("CONVICTION_MIN_TAKER", 0.8, float))
     conviction_max_baseline: float = field(default_factory=lambda: _env("CONVICTION_MAX_BASELINE", 0.4, float))

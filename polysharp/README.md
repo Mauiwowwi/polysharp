@@ -51,7 +51,7 @@ The same message ends with a health check on **your list**, flagging anyone who 
 
 HIGH is ≥4 and MED is ≥2 (`TIER_HIGH`, `TIER_MED`). `/tier high` shows only HIGH buys; sells, exits, hedges and 🔥 CONSENSUS always come through.
 
-**Live.** In-game buys are never sent and never count toward agree/oppose. The one exception, toggled with `/livehedges on|off` (default on), is an in-game sell or hedge on a position you were alerted on pre-game. Those are tagged `🔴 LIVE`, so you know when a sharp is getting off something you may have tailed.
+**Live.** In-game buys are never sent and never count toward agree/oppose. The one exception, toggled with `/livehedges on|off` (default off — no live posts at all), is an in-game sell or hedge on a position you were alerted on pre-game. Those are tagged `🔴 LIVE`, so you know when a sharp is getting off something you may have tailed.
 
 ```
 TRADE ALERT! - HomeRunHazard
@@ -134,7 +134,7 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 | `SILENT_GENERAL` | true | General copy posts without a notification, so only the sport tab pings |
 | `SPORTS_ONLY_ALERTS` / `PREGAME_ONLY_ALERTS` | true / true | alert-time filters |
 | `CONSENSUS_ALERT_WALLETS` | 3 | separate 🔥 message threshold |
-| `LIVE_HEDGE_ALERTS` | true | default for /livehedges |
+| `LIVE_HEDGE_ALERTS` | false | default for /livehedges |
 | `MIN_ALERT_USD` | 2000 | smallest bundle that alerts (or use `/min`) |
 
 ## Deploy on Railway
