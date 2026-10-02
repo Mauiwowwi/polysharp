@@ -29,6 +29,9 @@ class API:
                 pos(3, "Will X win the election?", "Yes", 90000, 0.5, 0.6, "election-x")]  # non-sports
         rows += [pos(10 + i, f"Dodgers vs. Padres {i}", "Dodgers", 1000 * (i + 1), 0.5, 0.52,
                      f"mlb-lad-sd-{i}") for i in range(12)]
+        self.calls = getattr(self, "calls", []) + [redeemable]
+        if redeemable is False:
+            rows = [r for r in rows if not r["redeemable"]]
         return rows
 
     async def activity(self, user, start=None, limit=100, market=None):
@@ -209,3 +212,13 @@ def test_classify_gamma_keeps_event_title():
     m = classify_gamma({"events": [{"slug": "fif-nor-wal-2026-10-10", "title": "Norway vs. Wales"}],
                         "feeType": "sports_fees_v1"})
     assert m["event_title"] == "Norway vs. Wales"
+
+
+
+def test_top10_asks_api_for_open_positions_only():
+    """The API caps at 100 rows; a big account's unredeemed settled bets used to fill them
+    all, so new open bets (e.g. Cyprus NO) never reached /top10."""
+    import inspect
+    from polysharp import main
+    src = inspect.getsource(main.App.top_positions)
+    assert 'redeemable=False' in src

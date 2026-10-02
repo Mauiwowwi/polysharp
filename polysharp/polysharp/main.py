@@ -199,7 +199,9 @@ class App:
 
     async def top_positions(self, addr, n=10):
         """Biggest OPEN sports positions by $ in (resolved ones are excluded)."""
-        rows = await self.api.positions(addr, sort="INITIAL")
+        # API returns max 100 rows: ask for open (non-redeemable) ones only, or a big
+        # account's settled-but-unredeemed bets crowd its live positions out
+        rows = await self.api.positions(addr, sort="INITIAL", redeemable=False)
         rows = [r for r in rows if not r.get("redeemable")
                 and 0 < float(r.get("curPrice") or 0) < 1 and float(r.get("size") or 0) >= 1]
         meta = await self.markets.get({r["conditionId"]: r.get("eventSlug") or r.get("slug") or ""

@@ -399,19 +399,31 @@ class Watcher:
         return [], other
 
     async def _crowd(self, t):
-        """Other tracked wallets currently holding either side of this market."""
-        since = time.time() - self.cfg.crowd_days * 86400
-        others = [w for w in self.store.wallets_in_market(t["condition_id"], since)
-                  if w != t["wallet"] and w in self.wallets]
+        """Other tracked wallets currently holding either side of this market.
+
+        Checks every tracked wallet's live holdings in this market (not just the ones
+        the bot happened to see trade), so positions taken before a redeploy, or while
+        the bot was down, still show up as 🤝 / ⚔️."""
+        others = [w for w in self.wallets if w != t["wallet"]]
+        seen = set(self.store.wallets_in_market(t["condition_id"], time.time() - self.cfg.crowd_days * 86400))
+        others.sort(key=lambda w: w not in seen)          # recently-seen first if we must cap
+        others = others[:60]
+        sem = asyncio.Semaphore(8)
+
+        async def book(w):
+            async with sem:
+                return await self._wallet_book(w, t["condition_id"])
+        books = await asyncio.gather(*(book(w) for w in others))
         agree, oppose = [], []
-        books = await asyncio.gather(*(self._wallet_book(w, t["condition_id"]) for w in others))
-        floor = self.min_usd() * 0.5
-        for w, book in zip(others, books):
-            for asset, p in (book or {}).items():
+        floor = self.cfg.crowd_min_usd
+        for w, bk in zip(others, books):
+            for asset, p in (bk or {}).items():
                 if p["size"] < 1 or p["cost"] < floor:
                     continue
                 row = {"wallet": w, **p}
                 (agree if asset == t["asset"] else oppose).append(row)
+        agree.sort(key=lambda x: -x["cost"])
+        oppose.sort(key=lambda x: -x["cost"])
         return agree, oppose
 
     @staticmethod
