@@ -25,14 +25,22 @@ def iso(ts):
 class FakeAPI:
     def __init__(self):
         self.books = {}      # (wallet, cond) -> list of position rows
+        self.games = {}      # wallet -> whole-account open positions
 
     def hold(self, wallet, cond, asset, outcome, size, avg):
         self.books.setdefault((wallet, cond), []).append(
             {"asset": asset, "outcome": outcome, "size": size, "avgPrice": avg,
              "initialValue": size * avg, "currentValue": size * avg})
 
-    async def positions(self, user, market=None, redeemable=None):
+    async def positions(self, user, market=None, redeemable=None, offset=0):
+        if market is None:                      # whole-account lookup (same-game scan)
+            return self.games.get(user, [])
         return self.books.get((user, market), [])
+
+    def game_pos(self, wallet, cond, title, outcome, size, avg, event="cfb-stan-wake-2026-10-03"):
+        self.__dict__.setdefault("games", {}).setdefault(wallet, []).append(
+            {"conditionId": cond, "asset": cond[-3:], "title": title, "outcome": outcome, "size": size,
+             "avgPrice": avg, "initialValue": size * avg, "eventSlug": event, "redeemable": False})
 
     async def activity(self, user, start=None, limit=100):
         return []
@@ -424,3 +432,52 @@ async def test_no_live_posts_by_default(tmp_path):
     await w.ingest(fill(A, LIVE, YES, "Dodgers", 8000, 0.7, "0xs", side="SELL"))
     await flush()
     assert tg.sent == []
+
+
+
+def cfb_fill(wallet, cond, asset, title, outcome, size, price, tx):
+    return normalize({"proxyWallet": wallet, "conditionId": cond, "asset": asset, "outcome": outcome,
+                      "size": size, "price": price, "side": "BUY", "transactionHash": tx,
+                      "title": title, "slug": "cfb-stan-wake-2026-10-03-spread-home-16pt5",
+                      "eventSlug": "cfb-stan-wake-2026-10-03", "timestamp": NOW}, "ws")
+
+
+@pytest.mark.asyncio
+async def test_same_wallet_alt_line_middle(tmp_path):
+    """HomeRunHazard: Wake Forest -13.5 yesterday, Stanford +16.5 today -> middle 14-16."""
+    c, api, st, tg, w = setup(tmp_path, min_alert_usd=1000)
+    w13 = "0x" + "1" * 64
+    w16 = PRE                                   # pre-game market for the new bet
+    api.game_pos(A, w13, "Spread: Wake Forest (-13.5)", "Wake Forest", 11987, 0.502)
+    api.game_pos(A, "0x" + "2" * 64, "Spread: Wake Forest (-14.5)", "Wake Forest", 2700, 0.51)
+    api.hold(A, w16, NO, "Stanford", 1976, 0.56)
+    await w.ingest(cfb_fill(A, w16, NO, "Spread: Wake Forest (-16.5)", "Stanford", 1976, 0.56, "0xm"))
+    await flush()
+    msg = tg.sent[0]
+    assert "(🔀 MIDDLE 🔀)" in msg
+    assert "🔀 Middles their <b>Wake Forest -13.5</b> 11,987 sh" in msg
+    assert "both win if Wake Forest by 14–16" in msg
+
+
+@pytest.mark.asyncio
+async def test_other_wallet_on_other_line_opposes(tmp_path):
+    c, api, st, tg, w = setup(tmp_path, min_alert_usd=1000)
+    api.game_pos(B, "0x" + "1" * 64, "Spread: Wake Forest (-13.5)", "Wake Forest", 8000, 0.5)
+    api.game_pos(C, "0x" + "3" * 64, "Spread: Wake Forest (-20.5)", "Stanford", 4000, 0.5)
+    api.hold(A, PRE, NO, "Stanford", 3000, 0.56)
+    await w.ingest(cfb_fill(A, PRE, NO, "Spread: Wake Forest (-16.5)", "Stanford", 3000, 0.56, "0xn"))
+    await flush()
+    msg = tg.sent[0]
+    assert "⚔️ OPPOSES ×1" in msg and "🤝 AGREES ×1" in msg
+    assert "beta is on <b>Wake Forest -13.5</b>" in msg and "middle: both win if Wake Forest by 14–16" in msg
+    assert "gamma also on Stanford +20.5" in msg
+
+
+def test_lean_and_relate_totals_and_ml():
+    from polysharp.watcher import lean, relate
+    assert relate(lean("A vs. B: O/U 45.5", "Under"), lean("A vs. B: O/U 42.5", "Over")) == \
+        ("middle", "total lands 43–45")
+    assert relate(lean("Stanford vs. Wake Forest", "Stanford"),
+                  lean("Spread: Wake Forest (-13.5)", "Wake Forest"), "Stanford", "Wake Forest") == \
+        ("gap", "Wake Forest by 1–13")
+    assert relate(lean("A vs. B: O/U 45.5", "Over"), lean("A vs. B: 1st Half O/U 21.5", "Under")) is None

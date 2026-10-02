@@ -145,6 +145,103 @@ def yes_no_label(title, yes):
     m = _WILL.match(t)
     q = m.group(1) if m else t.rstrip("?")
     return f"{q} {side}"
+# --- same game, different market (alt lines, ML vs spread, totals) -------------
+_GAME = re.compile(r"^([a-z0-9]+-[a-z0-9]+-[a-z0-9]+-\d{4}-\d{2}-\d{2})")
+_LINE = re.compile(r"^(.+?)\s+([-+]\d+(?:\.\d+)?)$")
+
+
+def game_key(slug):
+    """'cfb-stan-wake-2026-10-03' (also strips '-more-markets' etc.)."""
+    slug = (slug or "").lower()
+    m = _GAME.match(slug)
+    return m.group(1) if m else slug
+
+
+def lean(title, outcome):
+    """What a position roots for: ('team', scope, name, line) | ('total', scope, 'over'|'under', line).
+
+    Spread/ML/'Will X win' YES -> team; O/U -> total. scope separates 1st-half markets
+    from full-game ones. Anything else (draw, BTTS, exact score, soccer NO) -> None."""
+    title, outcome = title or "", (outcome or "").strip()
+    scope = "1h" if re.search(r"1st half|first half|1h\b", title, re.I) else "fg"
+    label = pick_label(title, outcome)
+    if _TOTAL.search(title) and outcome.lower() in ("over", "under"):
+        return ("total", scope, outcome.lower(), float(_TOTAL.search(title).group(1)))
+    if _SPREAD.search(title):
+        m = _LINE.match(label)
+        if m:
+            return ("team", scope, m.group(1).strip().lower(), float(m.group(2)))
+        return None
+    if outcome.lower() == "yes":
+        m = _WIN.match(title.strip())
+        return ("team", scope, m.group(1).strip().lower(), 0.0) if m else None
+    if outcome.lower() == "no":
+        return None
+    if " vs" in title.lower() and ":" not in title:      # moneyline: outcome is the team
+        return ("team", scope, outcome.lower(), 0.0)
+    return None
+
+
+def relate(new, old, new_name=None, old_name=None):
+    """How an older position relates to the new bet.
+
+    Returns (kind, note): kind 'same' (same side, other line), 'middle' (both can win),
+    'gap' (both can lose) or 'opposite' (exact other side); None if unrelated
+    (different market type or half). note: the window in words, e.g. 'Wake Forest by 14–16'."""
+    if not new or not old or new[0] != old[0] or new[1] != old[1]:
+        return None
+    if new[0] == "team":
+        _, _, a_team, a = new
+        _, _, b_team, b = old
+        if a_team == b_team:
+            return ("same", None)
+        # m = new team's margin. new covers if m > -a; old covers if -m + b > 0 -> m < b
+        lo, hi = -a, b
+        if lo == hi:
+            return ("opposite", None)
+        kind = "middle" if lo < hi else "gap"
+        x, y = min(lo, hi), max(lo, hi)
+        names = (new_name or a_team.title(), old_name or b_team.title())
+        return (kind, _margin_window(names, x, y))
+    _, _, a_side, a = new
+    _, _, b_side, b = old
+    if a_side == b_side:
+        return ("same", None)
+    over, under = (a, b) if a_side == "over" else (b, a)
+    if over == under:
+        return ("opposite", None)
+    kind = "middle" if over < under else "gap"
+    w = _int_window(min(over, under), max(over, under))
+    return (kind, f"total lands {w}" if w else None)
+
+
+def _team_name(label):
+    """'Stanford +16.5' -> 'Stanford'; 'Wake Forest' -> 'Wake Forest'."""
+    m = _LINE.match(label or "")
+    return m.group(1).strip() if m else (label or "").replace(" YES", "").strip()
+
+
+def _int_window(x, y):
+    """Whole numbers strictly between x and y as '14–16' / '15' (None if none)."""
+    import math
+    a, b = math.floor(x) + 1, math.ceil(y) - 1
+    if a > b:
+        return None
+    return f"{a}" if a == b else f"{a}–{b}"
+
+
+def _margin_window(names, x, y):
+    """Margins strictly between x and y (from the first team's view), said from the winner's side."""
+    new_team, old_team = names
+    if x >= 0:
+        w = _int_window(x, y)
+        return f"{new_team} by {w}" if w else None
+    if y <= 0:
+        w = _int_window(-y, -x)
+        return f"{old_team} by {w}" if w else None
+    return f"{new_team} by up to {_int_window(0, y) or 0} or {old_team} by up to {_int_window(0, -x) or 0}"
+
+
 def short_pick(title, outcome):
     """Pick label for the compact tab format: totals keep the matchup, moneylines say ML."""
     title, outcome = title or "", (outcome or "").strip()
@@ -297,7 +394,10 @@ class Watcher:
                 and not (fee and fee["taker_share"] >= 0.5):
             return
 
-        agree, oppose = await self._crowd(f0) if side == "BUY" and not is_hedge else ([], [])
+        key = self._game_of(f0, meta)
+        also_vs, cross_vs = (self._related(f0, await self._game_book(wallet, key, exclude_cond=cond))
+                             if side == "BUY" else ([], []))
+        agree, oppose = await self._crowd(f0, key) if side == "BUY" and not is_hedge else ([], [])
         usd = sum(f["usd"] for f in fills)
         score = None
         if side == "BUY" and not is_hedge:
@@ -310,7 +410,7 @@ class Watcher:
                 return
         text = self.format_alert(f0, fills, usd, shares, vwap, pos, fee, conviction, meta,
                                  hedge_vs=hedge_vs, flip_vs=flip_vs, agree=agree, oppose=oppose,
-                                 tailed=tailed, live=live, score=score)
+                                 tailed=tailed, live=live, score=score, also_vs=also_vs, cross_vs=cross_vs)
         sport = sport_of((meta or {}).get("league"))
         short = (self.format_short(f0, usd, vwap, pos, fee, hedge_vs, flip_vs, live)
                  if self.cfg.compact_tabs else None)
@@ -398,7 +498,55 @@ class Watcher:
             return other, []
         return [], other
 
-    async def _crowd(self, t):
+    async def _game_book(self, wallet, key, exclude_cond=None):
+        """This wallet's open positions in OTHER markets of the same game (alt lines, ML, totals)."""
+        if not key:
+            return []
+        rows = []
+        try:
+            for page in range(3):              # API pages at 100 rows
+                kw = {"offset": page * 100} if page else {}
+                got = await self.api.positions(wallet, redeemable=False, **kw)
+                rows += got or []
+                if len(got or []) < 100:
+                    break
+        except Exception:
+            return []
+        out = []
+        for r in rows:
+            cond = r.get("conditionId") or ""
+            if cond == exclude_cond or game_key(r.get("eventSlug") or r.get("slug")) != key:
+                continue
+            size = float(r.get("size") or 0)
+            if size < 1 or r.get("redeemable"):
+                continue
+            out.append({"cond": cond, "asset": str(r.get("asset")), "title": r.get("title") or "",
+                        "outcome": r.get("outcome") or "", "size": size,
+                        "avg": float(r.get("avgPrice") or 0), "cost": float(r.get("initialValue") or 0)})
+        return out
+
+    def _related(self, t, rows):
+        """Split same-game positions into same-side ('also') and crossing ('cross') lists."""
+        new = lean(t["title"], t["outcome"])
+        new_team = pick_label(t["title"], t["outcome"])
+        also, cross = [], []
+        for p in rows:
+            if p["cost"] < self.cfg.crowd_min_usd:
+                continue
+            old = lean(p["title"], p["outcome"])
+            rel = relate(new, old, _team_name(new_team), _team_name(pick_label(p["title"], p["outcome"])))
+            if not rel:
+                continue
+            row = {**p, "rel": rel[0], "note": rel[1]}
+            (also if rel[0] == "same" else cross).append(row)
+        also.sort(key=lambda x: -x["cost"])
+        cross.sort(key=lambda x: -x["cost"])
+        return also, cross
+
+    def _game_of(self, t, meta):
+        return game_key(t.get("event_slug") or (meta or {}).get("slug") or t.get("slug"))
+
+    async def _crowd(self, t, key=None):
         """Other tracked wallets currently holding either side of this market.
 
         Checks every tracked wallet's live holdings in this market (not just the ones
@@ -422,6 +570,15 @@ class Watcher:
                     continue
                 row = {"wallet": w, **p}
                 (agree if asset == t["asset"] else oppose).append(row)
+        if key:                                  # same game, other markets (alt lines, ML, totals)
+            async def gbook(w):
+                async with sem:
+                    return await self._game_book(w, key, exclude_cond=t["condition_id"])
+            gbooks = await asyncio.gather(*(gbook(w) for w in others))
+            for w, rows in zip(others, gbooks):
+                also, cross = self._related(t, rows)
+                agree += [{"wallet": w, **p} for p in also]
+                oppose += [{"wallet": w, **p} for p in cross]
         agree.sort(key=lambda x: -x["cost"])
         oppose.sort(key=lambda x: -x["cost"])
         return agree, oppose
@@ -494,7 +651,7 @@ class Watcher:
 
     def format_alert(self, t, fills, usd, shares, vwap, pos, fee=None, conviction=False, meta=None,
                      hedge_vs=(), agree=(), oppose=(), tailed=False, live=False, score=None,
-                     flip_vs=()):
+                     flip_vs=(), also_vs=(), cross_vs=()):
         """Labelled 'TRADE ALERT!' layout: facts on top, analysis below a blank line."""
         buy = t["side"] == "BUY"
         pick = pick_label(t["title"], t["outcome"], (meta or {}).get("event_title"))
@@ -510,6 +667,10 @@ class Watcher:
                 tags.append("🛡️ HEDGE 🛡️")
             elif flip_vs:
                 tags.append("⚖️ BOTH SIDES ⚖️")
+            if any(c["rel"] == "middle" for c in cross_vs):
+                tags.append("🔀 MIDDLE 🔀")
+            elif cross_vs:
+                tags.append("↔️ OTHER SIDE ↔️")
             if agree:
                 tags.append(f"🤝 AGREES ×{len(agree)}")
             if oppose:
@@ -556,6 +717,19 @@ class Watcher:
             lines.append(f"⚖️ Also holds <b>{esc(pick_label(t['title'], fv['outcome']))}</b> "
                          f"{fv['size']:,.0f} sh @ {fv['avg']:.3f} ({american(fv['avg'])}) · ${fv['cost']:,.0f}")
 
+        for c in list(cross_vs)[:3]:
+            held = (f"<b>{esc(pick_label(c['title'], c['outcome']))}</b> "
+                    f"{c['size']:,.0f} sh @ {c['avg']:.3f} ({american(c['avg'])}) · ${c['cost']:,.0f}")
+            if c["rel"] == "middle":
+                lines.append(f"🔀 Middles their {held}" + (f" → both win if {esc(c['note'])}" if c["note"] else ""))
+            elif c["rel"] == "gap":
+                lines.append(f"↔️ Other side of their {held}" + (f" → both lose if {esc(c['note'])}" if c["note"] else ""))
+            else:
+                lines.append(f"↔️ Other side of their {held}")
+        for a in list(also_vs)[:3]:
+            lines.append(f"➕ Also on <b>{esc(pick_label(a['title'], a['outcome']))}</b> "
+                         f"{a['size']:,.0f} sh @ {a['avg']:.3f} ({american(a['avg'])}) · ${a['cost']:,.0f}")
+
         # analysis
         lines.append("")
         if score:
@@ -563,12 +737,14 @@ class Watcher:
             lines.append(f"🎯 Conviction {score['pts']:+d} ({tier}): " + " · ".join(score["why"]))
         for a in agree:
             lines.append(f"🤝 {self._name(a['wallet'])} also on "
-                         f"{esc(pick_label(t['title'], a['outcome'] or t['outcome']))}: "
+                         f"{esc(pick_label(a.get('title') or t['title'], a['outcome'] or t['outcome']))}: "
                          f"{a['size']:,.0f} sh @ {a['avg']:.3f} ({american(a['avg'])}) · ${a['cost']:,.0f}")
         for o in oppose:
+            mid = (f" (🔀 middle: both win if {esc(o['note'])})" if o.get("rel") == "middle" and o.get("note")
+                   else "")
             lines.append(f"⚔️ {self._name(o['wallet'])} is on "
-                         f"<b>{esc(pick_label(t['title'], o['outcome']))}</b>: "
-                         f"{o['size']:,.0f} sh @ {o['avg']:.3f} ({american(o['avg'])}) · ${o['cost']:,.0f}")
+                         f"<b>{esc(pick_label(o.get('title') or t['title'], o['outcome']))}</b>: "
+                         f"{o['size']:,.0f} sh @ {o['avg']:.3f} ({american(o['avg'])}) · ${o['cost']:,.0f}{mid}")
         if not buy and tailed:
             lines.append("↩️ Getting off a position we alerted you on")
         both = self.both_sides_line(t, pos, list(hedge_vs) + list(flip_vs)) if buy else None

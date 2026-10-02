@@ -73,8 +73,10 @@ class PolyAPI:
             offset += 50
         return out[:max_rows]
 
-    async def positions(self, user, market=None, redeemable=None, sort=None):
+    async def positions(self, user, market=None, redeemable=None, sort=None, offset=0):
         params = {"user": user, "sizeThreshold": 1, "limit": 500}
+        if offset:
+            params["offset"] = offset
         if sort:
             params.update(sortBy=sort, sortDirection="DESC")
         if market:
