@@ -415,7 +415,15 @@ class Watcher:
         short = (self.format_short(f0, usd, vwap, pos, fee, hedge_vs, flip_vs, live)
                  if self.cfg.compact_tabs else None)
         if not self.muted():
-            await self.tg.send_alert(text, sport, short)
+            if self.has_details(agree, oppose):
+                full = self.format_alert(f0, fills, usd, shares, vwap, pos, fee, conviction, meta,
+                                         hedge_vs=hedge_vs, flip_vs=flip_vs, agree=agree, oppose=oppose,
+                                         tailed=tailed, live=live, score=score, also_vs=also_vs,
+                                         cross_vs=cross_vs, expanded=True)
+                eid = self.store.save_expand(full, text)
+                await self.tg.send_alert(text, sport, short, buttons=[[("🔎 Show details", f"exp:{eid}")]])
+            else:
+                await self.tg.send_alert(text, sport, short)
             self.alerts_sent += 1
         if side == "BUY" and not is_hedge:
             self.store.mark_alerted(wallet, cond, f0["asset"])
@@ -507,14 +515,20 @@ class Watcher:
             for page in range(3):              # API pages at 100 rows
                 kw = {"offset": page * 100} if page else {}
                 got = await self.api.positions(wallet, redeemable=False, **kw)
-                rows += got or []
-                if len(got or []) < 100:
+                new = [r for r in (got or []) if (r.get("conditionId"), str(r.get("asset"))) not in
+                       {(x.get("conditionId"), str(x.get("asset"))) for x in rows}]
+                rows += new
+                if len(got or []) < 100 or not new:
                     break
         except Exception:
             return []
-        out = []
+        out, seen = [], set()
         for r in rows:
             cond = r.get("conditionId") or ""
+            k = (cond, str(r.get("asset")))
+            if k in seen:                       # API can repeat rows across pages
+                continue
+            seen.add(k)
             if cond == exclude_cond or game_key(r.get("eventSlug") or r.get("slug")) != key:
                 continue
             size = float(r.get("size") or 0)
@@ -525,13 +539,13 @@ class Watcher:
                         "avg": float(r.get("avgPrice") or 0), "cost": float(r.get("initialValue") or 0)})
         return out
 
-    def _related(self, t, rows):
+    def _related(self, t, rows, floor=50.0):
         """Split same-game positions into same-side ('also') and crossing ('cross') lists."""
         new = lean(t["title"], t["outcome"])
         new_team = pick_label(t["title"], t["outcome"])
         also, cross = [], []
         for p in rows:
-            if p["cost"] < self.cfg.crowd_min_usd:
+            if p["cost"] < floor:
                 continue
             old = lean(p["title"], p["outcome"])
             rel = relate(new, old, _team_name(new_team), _team_name(pick_label(p["title"], p["outcome"])))
@@ -562,26 +576,52 @@ class Watcher:
             async with sem:
                 return await self._wallet_book(w, t["condition_id"])
         books = await asyncio.gather(*(book(w) for w in others))
-        agree, oppose = [], []
-        floor = self.cfg.crowd_min_usd
+        agree, oppose = {}, {}               # wallet -> rows
+
+        def add(side, w, row):
+            rows = side.setdefault(w, [])
+            k = (row.get("cond") or t["condition_id"], str(row.get("asset")))
+            if all((r.get("cond") or t["condition_id"], str(r.get("asset"))) != k for r in rows):
+                rows.append(row)
         for w, bk in zip(others, books):
             for asset, p in (bk or {}).items():
-                if p["size"] < 1 or p["cost"] < floor:
+                if p["size"] < 1:
                     continue
-                row = {"wallet": w, **p}
-                (agree if asset == t["asset"] else oppose).append(row)
+                add(agree if asset == t["asset"] else oppose, w, {"wallet": w, "asset": asset, **p})
         if key:                                  # same game, other markets (alt lines, ML, totals)
             async def gbook(w):
                 async with sem:
                     return await self._game_book(w, key, exclude_cond=t["condition_id"])
             gbooks = await asyncio.gather(*(gbook(w) for w in others))
             for w, rows in zip(others, gbooks):
-                also, cross = self._related(t, rows)
-                agree += [{"wallet": w, **p} for p in also]
-                oppose += [{"wallet": w, **p} for p in cross]
-        agree.sort(key=lambda x: -x["cost"])
-        oppose.sort(key=lambda x: -x["cost"])
-        return agree, oppose
+                also, cross = self._related(t, rows, floor=1.0)
+                for p in also:
+                    add(agree, w, {"wallet": w, **p})
+                for p in cross:
+                    add(oppose, w, {"wallet": w, **p})
+        floor = self.crowd_min()
+        return self._groups(agree, floor), self._groups(oppose, floor)
+
+    def crowd_min(self):
+        return float(self.store.get("crowd_min", self.cfg.crowd_min_usd))
+
+    @staticmethod
+    def _groups(by_wallet, floor):
+        """One entry per wallet (all its lines summed); wallets under `floor` $ are dropped."""
+        out = []
+        for w, rows in by_wallet.items():
+            rows = sorted(rows, key=lambda r: -r["cost"])
+            cost = sum(r["cost"] for r in rows)
+            size = sum(r["size"] for r in rows)
+            if cost < floor:
+                continue
+            top = rows[0]
+            out.append({"wallet": w, "cost": cost, "size": size,
+                        "avg": cost / size if size else top["avg"], "outcome": top.get("outcome"),
+                        "title": top.get("title"), "rel": top.get("rel"), "note": top.get("note"),
+                        "rows": rows})
+        out.sort(key=lambda g: -g["cost"])
+        return out
 
     @staticmethod
     def tier_rank(tier):
@@ -651,7 +691,7 @@ class Watcher:
 
     def format_alert(self, t, fills, usd, shares, vwap, pos, fee=None, conviction=False, meta=None,
                      hedge_vs=(), agree=(), oppose=(), tailed=False, live=False, score=None,
-                     flip_vs=(), also_vs=(), cross_vs=()):
+                     flip_vs=(), also_vs=(), cross_vs=(), expanded=None):
         """Labelled 'TRADE ALERT!' layout: facts on top, analysis below a blank line."""
         buy = t["side"] == "BUY"
         pick = pick_label(t["title"], t["outcome"], (meta or {}).get("event_title"))
@@ -735,16 +775,7 @@ class Watcher:
         if score:
             tier = {"HIGH": "🔥 HIGH", "MED": "⭐ MED", "LOW": "▫️ LOW"}[score["tier"]]
             lines.append(f"🎯 Conviction {score['pts']:+d} ({tier}): " + " · ".join(score["why"]))
-        for a in agree:
-            lines.append(f"🤝 {self._name(a['wallet'])} also on "
-                         f"{esc(pick_label(a.get('title') or t['title'], a['outcome'] or t['outcome']))}: "
-                         f"{a['size']:,.0f} sh @ {a['avg']:.3f} ({american(a['avg'])}) · ${a['cost']:,.0f}")
-        for o in oppose:
-            mid = (f" (🔀 middle: both win if {esc(o['note'])})" if o.get("rel") == "middle" and o.get("note")
-                   else "")
-            lines.append(f"⚔️ {self._name(o['wallet'])} is on "
-                         f"<b>{esc(pick_label(o.get('title') or t['title'], o['outcome']))}</b>: "
-                         f"{o['size']:,.0f} sh @ {o['avg']:.3f} ({american(o['avg'])}) · ${o['cost']:,.0f}{mid}")
+        lines += self.crowd_lines(t, agree, oppose, expanded)
         if not buy and tailed:
             lines.append("↩️ Getting off a position we alerted you on")
         both = self.both_sides_line(t, pos, list(hedge_vs) + list(flip_vs)) if buy else None
@@ -767,6 +798,46 @@ class Watcher:
         while lines and lines[-1] == "":
             lines.pop()
         return "\n".join(lines)
+
+    def crowd_lines(self, t, agree, oppose, expanded=None):
+        """🤝/⚔️ lines. Few positions -> one line each. Many -> one summary line per side
+        (expanded=False) or every position (expanded=True, the 'Show details' view)."""
+        n_rows = sum(len(g.get("rows") or [g]) for g in list(agree) + list(oppose))
+        if expanded is None:
+            expanded = n_rows <= self.cfg.crowd_inline_max
+        out = []
+        if expanded:
+            for g in agree:
+                for r in g.get("rows") or [g]:
+                    out.append(f"🤝 {self._name(g['wallet'])} also on "
+                               f"{esc(pick_label(r.get('title') or t['title'], r.get('outcome') or t['outcome']))}: "
+                               f"{r['size']:,.0f} sh @ {r['avg']:.3f} ({american(r['avg'])}) · ${r['cost']:,.0f}")
+            for g in oppose:
+                for r in g.get("rows") or [g]:
+                    mid = (f" (🔀 middle: both win if {esc(r['note'])})"
+                           if r.get("rel") == "middle" and r.get("note") else "")
+                    out.append(f"⚔️ {self._name(g['wallet'])} is on "
+                               f"<b>{esc(pick_label(r.get('title') or t['title'], r.get('outcome')))}</b>: "
+                               f"{r['size']:,.0f} sh @ {r['avg']:.3f} ({american(r['avg'])}) · ${r['cost']:,.0f}{mid}")
+            return out
+
+        def who(groups):
+            bits = []
+            for g in groups[:3]:
+                rows = g.get("rows") or [g]
+                lbl = pick_label(rows[0].get("title") or t["title"], rows[0].get("outcome") or t["outcome"])
+                lbl = f"{_team_name(lbl)} ({len(rows)} lines)" if len(rows) > 1 else lbl
+                bits.append(f"{self._name(g['wallet'])} ${g['cost']:,.0f} on {esc(lbl)}")
+            more = f" · +{len(groups) - 3} more" if len(groups) > 3 else ""
+            return " · ".join(bits) + more
+        if agree:
+            out.append(f"🤝 Agree: {who(agree)}")
+        if oppose:
+            out.append(f"⚔️ Oppose: {who(oppose)}")
+        return out
+
+    def has_details(self, agree, oppose):
+        return sum(len(g.get("rows") or [g]) for g in list(agree) + list(oppose)) > self.cfg.crowd_inline_max
 
     @staticmethod
     def both_sides_line(t, pos, others):

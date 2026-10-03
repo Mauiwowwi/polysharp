@@ -79,17 +79,17 @@ class Telegram:
                 log.warning("telegram send error: %s", e)
                 await asyncio.sleep(2)
 
-    async def send_alert(self, text, sport="other", short=None):
+    async def send_alert(self, text, sport="other", short=None, buttons=None):
         """Bet alerts: every feed chat. In topic-enabled groups the sport's tab gets the
         compact `short` version and General (the All feed) gets the full alert."""
         for c in self.chat_ids:
             tid = (self.topics.get(c) or {}).get(sport) or (self.topics.get(c) or {}).get("other")
             if tid:
-                await self.send(short or text, c, thread_id=tid)
+                await self.send(short or text, c, buttons=buttons, thread_id=tid)
                 if self.all_feed:                     # General tab = the "All" feed
-                    await self.send(text, c, silent=self.silent_general)
+                    await self.send(text, c, buttons=buttons, silent=self.silent_general)
             else:
-                await self.send(text, c)
+                await self.send(text, c, buttons=buttons)
 
     async def create_topic(self, chat_id, name):
         """Returns (thread_id, error)."""
@@ -143,6 +143,18 @@ class Telegram:
         for a in sorted(self.admins) or [self.chat_id]:
             await self.send(text, a, buttons)
 
+    async def edit_message(self, chat_id, message_id, text, buttons=None):
+        payload = {"chat_id": chat_id, "message_id": message_id, "text": text[:4090],
+                   "parse_mode": "HTML", "disable_web_page_preview": True,
+                   "reply_markup": {"inline_keyboard": [
+                       [{"text": lbl, "callback_data": data} for lbl, data in row] for row in (buttons or [])]}}
+        try:
+            r = await self.http.post(f"{self.base}/editMessageText", json=payload)
+            if r.status_code != 200 and "not modified" not in r.text:
+                log.warning("telegram edit %s: %s", r.status_code, r.text[:200])
+        except httpx.HTTPError as e:
+            log.warning("telegram edit error: %s", e)
+
     def callback(self, prefix):
         def deco(fn):
             self.callbacks[prefix] = fn
@@ -179,7 +191,10 @@ class Telegram:
         except Exception as e:
             log.exception("callback %s failed", data)
             reply = f"⚠️ failed: {esc(e)}"
-        if isinstance(reply, tuple):
+        if isinstance(reply, dict) and "edit" in reply:     # rewrite the tapped message in place
+            mid = (cb.get("message") or {}).get("message_id")
+            await self.edit_message(chat, mid, reply["edit"], reply.get("buttons"))
+        elif isinstance(reply, tuple):
             await self.send(reply[0], chat, buttons=reply[1], thread_id=thread)
         elif reply:
             await self.send(reply, chat, thread_id=thread)

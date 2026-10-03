@@ -57,12 +57,14 @@ class FakeAPI:
 class TG:
     def __init__(self):
         self.sent = []
+        self.buttons = []
 
     async def send(self, t, chat_id=None):
         self.sent.append(t)
 
-    async def send_alert(self, text, sport="other", short=None):
+    async def send_alert(self, text, sport="other", short=None, buttons=None):
         self.sent.append(text)
+        self.buttons.append(buttons)
 
 
 def setup(tmp_path, **kw):
@@ -411,7 +413,7 @@ async def test_hedge_bottom_line_bigger_on_old_side(tmp_path):
 @pytest.mark.asyncio
 async def test_agree_found_even_if_bot_never_saw_their_trade(tmp_path):
     """beta bought before the bot was running: still shows as 🤝 from live holdings."""
-    c, api, st, tg, w = setup(tmp_path)
+    c, api, st, tg, w = setup(tmp_path, crowd_min_usd=50)
     api.hold(B, PRE, YES, "Dodgers", 220, 0.28)          # small $62 position, never indexed
     api.hold(A, PRE, YES, "Dodgers", 10000, 0.5)
     await w.ingest(fill(A, PRE, YES, "Dodgers", 10000, 0.5, "0xa"))
@@ -481,3 +483,31 @@ def test_lean_and_relate_totals_and_ml():
                   lean("Spread: Wake Forest (-13.5)", "Wake Forest"), "Stanford", "Wake Forest") == \
         ("gap", "Wake Forest by 1–13")
     assert relate(lean("A vs. B: O/U 45.5", "Over"), lean("A vs. B: 1st Half O/U 21.5", "Under")) is None
+
+
+
+@pytest.mark.asyncio
+async def test_many_crowd_positions_collapse_to_summary_with_details_button(tmp_path):
+    """UpTheBlues on Charlotte +10.5 / +9.5 / +6.5 (rows repeated by the API) -> one line + button."""
+    c, api, st, tg, w = setup(tmp_path, min_alert_usd=1000)
+    for _ in range(3):                                   # API repeats pages
+        api.game_pos(B, "0x" + "1" * 64, "Spread: Wake Forest (-10.5)", "Stanford", 1000, 0.29)
+        api.game_pos(B, "0x" + "2" * 64, "Spread: Wake Forest (-9.5)", "Stanford", 1000, 0.26)
+        api.game_pos(B, "0x" + "3" * 64, "Spread: Wake Forest (-6.5)", "Stanford", 1000, 0.19)
+    api.game_pos(C, "0x" + "4" * 64, "Spread: Wake Forest (-6.5)", "Stanford", 100, 0.19)  # $19: too small
+    api.game_pos(D, "0x" + "5" * 64, "Spread: Wake Forest (-7.5)", "Wake Forest", 2000, 0.6)
+    api.hold(A, PRE, YES, "Wake Forest", 9000, 0.47)
+    await w.ingest(cfb_fill(A, PRE, YES, "Spread: Wake Forest (-20.5)", "Wake Forest", 9000, 0.47, "0xq"))
+    await flush()
+    msg = tg.sent[0]
+    assert "⚔️ OPPOSES ×1" in msg and "🤝 AGREES ×1" in msg     # wallets, not positions
+    assert "⚔️ Oppose: beta $740 on Stanford (3 lines)" in msg
+    assert "🤝 Agree: delta $1,200 on Wake Forest -7.5" in msg
+    assert "gamma" not in msg
+    assert msg.count("⚔️") == 2                               # tag + one summary line
+    (label, data), = tg.buttons[0][0]
+    assert label == "🔎 Show details" and data.startswith("exp:")
+    full, short = st.get_expand(data[4:])
+    assert short == msg
+    assert full.count("⚔️ beta is on") == 3                    # each line once, no repeats
+    assert "Stanford +10.5" in full and "Stanford +6.5" in full

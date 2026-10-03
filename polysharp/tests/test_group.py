@@ -109,3 +109,24 @@ async def test_alerts_group_only_admin_controls_in_dm():
     assert posted[4][0] == GROUP and "Only the bot admin" in posted[4][1]
     assert not any(c == ME and "BUY" in t for c, t in posted)   # no alerts in my DM
     await tg.close()
+
+
+@pytest.mark.asyncio
+async def test_details_button_edits_message_in_place():
+    from polysharp.telegram import Telegram
+    tg = Telegram("x", "-100")
+    edits = []
+
+    async def fake_edit(chat, mid, text, buttons=None):
+        edits.append((chat, mid, text, buttons))
+
+    async def fake_answer(*a, **k):
+        pass
+    tg.edit_message, tg.answer_callback = fake_edit, fake_answer
+
+    @tg.callback("exp")
+    async def _exp(eid):
+        return {"edit": f"FULL {eid}", "buttons": [[("🔼 Hide details", f"col:{eid}")]]}
+    await tg.handle_update({"callback_query": {"id": "1", "data": "exp:abc",
+                                               "message": {"message_id": 42, "chat": {"id": -100}}}})
+    assert edits == [("-100", 42, "FULL abc", [[("🔼 Hide details", "col:abc")]])]

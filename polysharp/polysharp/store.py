@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS trades (
     title TEXT, slug TEXT, side TEXT, usd REAL, price REAL);
 CREATE INDEX IF NOT EXISTS trades_asset ON trades(asset, ts);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS expand (id TEXT PRIMARY KEY, full TEXT, short TEXT, ts REAL);
 CREATE TABLE IF NOT EXISTS alerted (wallet TEXT, condition_id TEXT, asset TEXT, ts REAL,
     PRIMARY KEY (wallet, condition_id, asset));
 """
@@ -37,6 +38,19 @@ class Store:
     def set(self, k, v):
         self.db.execute("INSERT OR REPLACE INTO kv VALUES (?,?)", (k, json.dumps(v)))
         self.db.commit()
+
+    # --- tap-to-expand alerts -------------------------------------------------
+    def save_expand(self, full, short):
+        import hashlib
+        eid = hashlib.sha1(f"{time.time()}|{full}".encode()).hexdigest()[:12]
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO expand VALUES (?,?,?,?)",
+                            (eid, full, short, time.time()))
+        return eid
+
+    def get_expand(self, eid):
+        row = self.db.execute("SELECT full, short FROM expand WHERE id=?", (eid,)).fetchone()
+        return (row["full"], row["short"]) if row else None
 
     # --- wallets ------------------------------------------------------------
     def drop_auto_wallets(self):
@@ -158,3 +172,4 @@ class Store:
             self.db.execute("DELETE FROM seen WHERE ts<?", (cut,))
             self.db.execute("DELETE FROM trades WHERE ts<?", (cut,))
             self.db.execute("DELETE FROM alerted WHERE ts<?", (cut - 7 * 86400,))
+            self.db.execute("DELETE FROM expand WHERE ts<?", (cut,))

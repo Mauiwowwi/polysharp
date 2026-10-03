@@ -31,7 +31,7 @@ The same message ends with a health check on **your list**, flagging anyone who 
 - Game alerts show the league and the time to start.
 - Fills on the same wallet, outcome and side within `BUNDLE_SECONDS` merge into one alert.
 
-**Agree / oppose / hedge.** On every new pre-game buy the bot checks what your other wallets **currently hold** in that market. That's a live position lookup, so someone who already sold out doesn't count.
+**Agree / oppose / hedge.** On every new pre-game buy the bot checks what your other wallets **currently hold** in that market. That's a live position lookup, so someone who already sold out doesn't count. It covers the whole game: alt spreads, moneyline and totals count too (🔀 marks a middle). Each account is counted once, with all its lines added together, and accounts under `/crowdmin` (default $250, env `CROWD_MIN_USD`) are ignored. With more than `CROWD_INLINE_MAX` (3) positions, the alert shows one summary line per side and a **🔎 Show details** button that expands the message in place.
 - `🤝 AGREES ×n` / `⚔️ OPPOSES ×n` in the header, with one line per wallet showing size and average price.
 - `🔥 CONSENSUS` is sent as a separate message when `CONSENSUS_ALERT_WALLETS` (default 3) of your wallets are on the same side.
 - `🛡️ HEDGE` fires when a wallet buys the other side of a market where that side is still its **bigger** position. It shows both positions and the net result either way.
@@ -89,7 +89,7 @@ Checked on live rows: taker fills back out to exactly 0.030, and maker fills to 
 ## Telegram commands
 **Everyone** (group members): `/top10 [name | sport | league]` (e.g. `/top10 football` or `/top10 nfl` covers all accounts, `/top10 alwaysfade` one account; inside a sport tab plain `/top10` shows that sport), `/wallets`, `/stats 0x…`, `/status`, `/help`
 
-**Admin only:** `/topics [setup]`, `/bindtopic <sport>`, `/add 0x… [name]`, `/remove 0x…`, `/skip 0x… [days]`, `/suggest`, `/min 5000`, `/tier all|med|high`, `/takeronly on|off`, `/livehedges on|off`, `/mute 2h`, `/unmute`
+**Admin only:** `/topics [setup]`, `/bindtopic <sport>`, `/add 0x… [name]`, `/remove 0x…`, `/skip 0x… [days]`, `/suggest`, `/min 5000`, `/tier all|med|high`, `/takeronly on|off`, `/livehedges on|off`, `/crowdmin 250`, `/mute 2h`, `/unmute`
 
 ## Group chat setup
 1. Add the bot to your group. To get the group's id, open the group in web.telegram.org/a; the number after `#` starts with `-100`.

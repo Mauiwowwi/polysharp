@@ -505,6 +505,7 @@ class App:
                         f"/suggest — shortlist now (auto daily at {cfg.suggest_time}, sent to you privately)\n"
                         "/skip 0x… [days] — hide from shortlists\n"
                         "/min 5000 · /tier all|med|high · /takeronly on|off · /livehedges on|off\n"
+                        "/crowdmin 250 — smallest 🤝/⚔️ holding that counts\n"
                         "/mute 2h · /unmute\n"
                         "/topics [setup] · /bindtopic &lt;sport&gt; — sport tabs in the group")
             return out
@@ -693,6 +694,30 @@ class App:
                        "on positions you were alerted on pre-game."
                        if on else "Nothing in-game is sent at all."))
 
+        @tg.callback("exp")
+        async def _expand(eid):
+            row = st.get_expand(eid)
+            if not row:
+                return "Those details have expired (kept 7 days)."
+            return {"edit": row[0], "buttons": [[("🔼 Hide details", f"col:{eid}")]]}
+
+        @tg.callback("col")
+        async def _collapse(eid):
+            row = st.get_expand(eid)
+            if not row:
+                return None
+            return {"edit": row[1], "buttons": [[("🔎 Show details", f"exp:{eid}")]]}
+
+        @tg.command("crowdmin")
+        async def _crowdmin(args):
+            if args:
+                try:
+                    st.set("crowd_min", float(args[0].replace("$", "").replace(",", "")))
+                except ValueError:
+                    return "Usage: /crowdmin 250"
+            return (f"🤝/⚔️ count other accounts holding at least <b>${w.crowd_min():,.0f}</b> "
+                    f"on a side of the game (all their lines added together).")
+
         @tg.command("takeronly")
         async def _takeronly(args):
             if args and args[0].lower() in ("on", "off"):
@@ -703,7 +728,7 @@ class App:
                        if on else "Alerting on all trades; conviction trades get ⚡."))
 
     ADMIN_ONLY = {"add", "remove", "skip", "suggest", "refresh", "min", "tier", "topics", "bindtopic",
-                  "takeronly", "livehedges", "mute", "unmute"}
+                  "takeronly", "livehedges", "mute", "unmute", "crowdmin"}
 
     def _wallet_buttons(self, prefix="top"):
         names = sorted(self.watcher.wallets.items(), key=lambda kv: (kv[1].get("name") or kv[0]).lower())
