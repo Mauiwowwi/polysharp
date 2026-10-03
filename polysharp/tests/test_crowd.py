@@ -487,27 +487,27 @@ def test_lean_and_relate_totals_and_ml():
 
 
 @pytest.mark.asyncio
-async def test_many_crowd_positions_collapse_to_summary_with_details_button(tmp_path):
-    """UpTheBlues on Charlotte +10.5 / +9.5 / +6.5 (rows repeated by the API) -> one line + button."""
+async def test_many_crowd_positions_add_up_per_side(tmp_path):
+    """Several accounts / lines -> amounts summed into one line per side, no repeats."""
     c, api, st, tg, w = setup(tmp_path, min_alert_usd=1000)
     for _ in range(3):                                   # API repeats pages
         api.game_pos(B, "0x" + "1" * 64, "Spread: Wake Forest (-10.5)", "Stanford", 1000, 0.29)
         api.game_pos(B, "0x" + "2" * 64, "Spread: Wake Forest (-9.5)", "Stanford", 1000, 0.26)
-        api.game_pos(B, "0x" + "3" * 64, "Spread: Wake Forest (-6.5)", "Stanford", 1000, 0.19)
-    api.game_pos(C, "0x" + "4" * 64, "Spread: Wake Forest (-6.5)", "Stanford", 100, 0.19)  # $19: too small
+    api.game_pos(C, "0x" + "4" * 64, "Spread: Wake Forest (-6.5)", "Stanford", 100, 0.19)  # $19 total: dropped
     api.game_pos(D, "0x" + "5" * 64, "Spread: Wake Forest (-7.5)", "Wake Forest", 2000, 0.6)
+    api.hold(D, PRE, YES, "Wake Forest", 1000, 0.5)
     api.hold(A, PRE, YES, "Wake Forest", 9000, 0.47)
     await w.ingest(cfb_fill(A, PRE, YES, "Spread: Wake Forest (-20.5)", "Wake Forest", 9000, 0.47, "0xq"))
     await flush()
     msg = tg.sent[0]
-    assert "⚔️ OPPOSES ×1" in msg and "🤝 AGREES ×1" in msg     # wallets, not positions
-    assert "⚔️ Oppose: beta $740 on Stanford (3 lines)" in msg
-    assert "🤝 Agree: delta $1,200 on Wake Forest -7.5" in msg
-    assert "gamma" not in msg
-    assert msg.count("⚔️") == 2                               # tag + one summary line
-    (label, data), = tg.buttons[0][0]
-    assert label == "🔎 Show details" and data.startswith("exp:")
-    full, short = st.get_expand(data[4:])
-    assert short == msg
-    assert full.count("⚔️ beta is on") == 3                    # each line once, no repeats
-    assert "Stanford +10.5" in full and "Stanford +6.5" in full
+    assert "⚔️ OPPOSES ×1" in msg and "🤝 AGREES ×1" in msg     # accounts, not positions
+    assert "🤝 $1,700 more on <b>Wake Forest</b> (delta)" in msg
+    assert "⚔️ $550 on <b>Stanford</b> (beta)" in msg
+    assert "gamma" not in msg and msg.count("⚔️") == 2         # tag + one line
+    assert tg.buttons[0] is None                              # no details button any more
+
+
+def test_totals_side_name():
+    from polysharp.watcher import side_name
+    assert side_name("A vs. B: O/U 45.5", "Over") == "Over"
+    assert side_name("Spread: Georgia (-25.5)", "Vanderbilt") == "Vanderbilt"

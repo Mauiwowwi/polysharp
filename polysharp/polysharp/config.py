@@ -70,8 +70,6 @@ class Config:
     crowd_days: float = field(default_factory=lambda: _env("CROWD_DAYS", 7, float))
     # Smallest total (per wallet, all lines of the game) that still counts as 🤝 agree / ⚔️ oppose
     crowd_min_usd: float = field(default_factory=lambda: _env("CROWD_MIN_USD", 250, float))
-    # More crowd positions than this -> one summary line per side + a "Show details" button
-    crowd_inline_max: int = field(default_factory=lambda: _env("CROWD_INLINE_MAX", 3, int))
     # Let in-game SELLs / hedge-buys through, but only on positions you were alerted on pre-game
     live_hedge_alerts: bool = field(default_factory=lambda: _env("LIVE_HEDGE_ALERTS", False, bool))
     # Conviction = this bundle >= X% taker, from a wallet that is normally <= Y% taker

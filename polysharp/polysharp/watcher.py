@@ -215,6 +215,14 @@ def relate(new, old, new_name=None, old_name=None):
     return (kind, f"total lands {w}" if w else None)
 
 
+def side_name(title, outcome):
+    """The side a position is on, without the line: 'Georgia', 'Over', 'Norway YES'."""
+    lz = lean(title, outcome)
+    if lz and lz[0] == "total":
+        return lz[2].title()
+    return _team_name(pick_label(title, outcome))
+
+
 def _team_name(label):
     """'Stanford +16.5' -> 'Stanford'; 'Wake Forest' -> 'Wake Forest'."""
     m = _LINE.match(label or "")
@@ -415,15 +423,7 @@ class Watcher:
         short = (self.format_short(f0, usd, vwap, pos, fee, hedge_vs, flip_vs, live)
                  if self.cfg.compact_tabs else None)
         if not self.muted():
-            if self.has_details(agree, oppose):
-                full = self.format_alert(f0, fills, usd, shares, vwap, pos, fee, conviction, meta,
-                                         hedge_vs=hedge_vs, flip_vs=flip_vs, agree=agree, oppose=oppose,
-                                         tailed=tailed, live=live, score=score, also_vs=also_vs,
-                                         cross_vs=cross_vs, expanded=True)
-                eid = self.store.save_expand(full, text)
-                await self.tg.send_alert(text, sport, short, buttons=[[("🔎 Show details", f"exp:{eid}")]])
-            else:
-                await self.tg.send_alert(text, sport, short)
+            await self.tg.send_alert(text, sport, short)
             self.alerts_sent += 1
         if side == "BUY" and not is_hedge:
             self.store.mark_alerted(wallet, cond, f0["asset"])
@@ -691,7 +691,7 @@ class Watcher:
 
     def format_alert(self, t, fills, usd, shares, vwap, pos, fee=None, conviction=False, meta=None,
                      hedge_vs=(), agree=(), oppose=(), tailed=False, live=False, score=None,
-                     flip_vs=(), also_vs=(), cross_vs=(), expanded=None):
+                     flip_vs=(), also_vs=(), cross_vs=()):
         """Labelled 'TRADE ALERT!' layout: facts on top, analysis below a blank line."""
         buy = t["side"] == "BUY"
         pick = pick_label(t["title"], t["outcome"], (meta or {}).get("event_title"))
@@ -775,7 +775,7 @@ class Watcher:
         if score:
             tier = {"HIGH": "🔥 HIGH", "MED": "⭐ MED", "LOW": "▫️ LOW"}[score["tier"]]
             lines.append(f"🎯 Conviction {score['pts']:+d} ({tier}): " + " · ".join(score["why"]))
-        lines += self.crowd_lines(t, agree, oppose, expanded)
+        lines += self.crowd_lines(t, agree, oppose)
         if not buy and tailed:
             lines.append("↩️ Getting off a position we alerted you on")
         both = self.both_sides_line(t, pos, list(hedge_vs) + list(flip_vs)) if buy else None
@@ -799,45 +799,37 @@ class Watcher:
             lines.pop()
         return "\n".join(lines)
 
-    def crowd_lines(self, t, agree, oppose, expanded=None):
-        """🤝/⚔️ lines. Few positions -> one line each. Many -> one summary line per side
-        (expanded=False) or every position (expanded=True, the 'Show details' view)."""
-        n_rows = sum(len(g.get("rows") or [g]) for g in list(agree) + list(oppose))
-        if expanded is None:
-            expanded = n_rows <= self.cfg.crowd_inline_max
+    def crowd_lines(self, t, agree, oppose):
+        """🤝/⚔️ lines, per side. One position on a side -> its full detail line.
+        More -> amounts added up across every account and line:
+        '🤝 $6,133 more on Georgia (UpTheBlues)' / '⚔️ $11,007 on Vanderbilt (Kch-Temp)'."""
         out = []
-        if expanded:
-            for g in agree:
-                for r in g.get("rows") or [g]:
-                    out.append(f"🤝 {self._name(g['wallet'])} also on "
-                               f"{esc(pick_label(r.get('title') or t['title'], r.get('outcome') or t['outcome']))}: "
-                               f"{r['size']:,.0f} sh @ {r['avg']:.3f} ({american(r['avg'])}) · ${r['cost']:,.0f}")
-            for g in oppose:
-                for r in g.get("rows") or [g]:
+        for emoji, groups, word in (("🤝", agree, "more on"), ("⚔️", oppose, "on")):
+            rows = [(g, r) for g in groups for r in (g.get("rows") or [g])]
+            if not rows:
+                continue
+            if len(rows) == 1:
+                g, r = rows[0]
+                label = pick_label(r.get("title") or t["title"], r.get("outcome") or t["outcome"])
+                body = f"{r['size']:,.0f} sh @ {r['avg']:.3f} ({american(r['avg'])}) · ${r['cost']:,.0f}"
+                if emoji == "🤝":
+                    out.append(f"🤝 {self._name(g['wallet'])} also on {esc(label)}: {body}")
+                else:
                     mid = (f" (🔀 middle: both win if {esc(r['note'])})"
                            if r.get("rel") == "middle" and r.get("note") else "")
-                    out.append(f"⚔️ {self._name(g['wallet'])} is on "
-                               f"<b>{esc(pick_label(r.get('title') or t['title'], r.get('outcome')))}</b>: "
-                               f"{r['size']:,.0f} sh @ {r['avg']:.3f} ({american(r['avg'])}) · ${r['cost']:,.0f}{mid}")
-            return out
-
-        def who(groups):
-            bits = []
-            for g in groups[:3]:
-                rows = g.get("rows") or [g]
-                lbl = pick_label(rows[0].get("title") or t["title"], rows[0].get("outcome") or t["outcome"])
-                lbl = f"{_team_name(lbl)} ({len(rows)} lines)" if len(rows) > 1 else lbl
-                bits.append(f"{self._name(g['wallet'])} ${g['cost']:,.0f} on {esc(lbl)}")
-            more = f" · +{len(groups) - 3} more" if len(groups) > 3 else ""
-            return " · ".join(bits) + more
-        if agree:
-            out.append(f"🤝 Agree: {who(agree)}")
-        if oppose:
-            out.append(f"⚔️ Oppose: {who(oppose)}")
+                    out.append(f"⚔️ {self._name(g['wallet'])} is on <b>{esc(label)}</b>: {body}{mid}")
+                continue
+            sides = {}                      # side name -> [total $, [wallets]]
+            for g, r in rows:
+                name = side_name(r.get("title") or t["title"], r.get("outcome") or t["outcome"])
+                s_ = sides.setdefault(name, [0.0, []])
+                s_[0] += r["cost"]
+                if g["wallet"] not in s_[1]:
+                    s_[1].append(g["wallet"])
+            for name, (amt, ws) in sorted(sides.items(), key=lambda kv: -kv[1][0]):
+                who = ", ".join(self._name(w) for w in ws[:3]) + (f" +{len(ws) - 3}" if len(ws) > 3 else "")
+                out.append(f"{emoji} ${amt:,.0f} {word} <b>{esc(name)}</b> ({who})")
         return out
-
-    def has_details(self, agree, oppose):
-        return sum(len(g.get("rows") or [g]) for g in list(agree) + list(oppose)) > self.cfg.crowd_inline_max
 
     @staticmethod
     def both_sides_line(t, pos, others):

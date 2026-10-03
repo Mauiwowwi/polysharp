@@ -694,20 +694,6 @@ class App:
                        "on positions you were alerted on pre-game."
                        if on else "Nothing in-game is sent at all."))
 
-        @tg.callback("exp")
-        async def _expand(eid):
-            row = st.get_expand(eid)
-            if not row:
-                return "Those details have expired (kept 7 days)."
-            return {"edit": row[0], "buttons": [[("🔼 Hide details", f"col:{eid}")]]}
-
-        @tg.callback("col")
-        async def _collapse(eid):
-            row = st.get_expand(eid)
-            if not row:
-                return None
-            return {"edit": row[1], "buttons": [[("🔎 Show details", f"exp:{eid}")]]}
-
         @tg.command("crowdmin")
         async def _crowdmin(args):
             if args:
