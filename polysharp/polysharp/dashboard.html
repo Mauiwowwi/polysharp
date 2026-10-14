@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Whaletail Live</title>
+<script>
+  // dark by default; the header button switches and remembers the choice
+  try { document.documentElement.dataset.theme = localStorage.getItem("wt-theme") || "dark"; }
+  catch (e) { document.documentElement.dataset.theme = "dark"; }
+</script>
 <style>
 :root {
   color-scheme: light;
@@ -49,6 +54,13 @@ header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content:
 h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
 h1 span { color: var(--muted); font-weight: 500; }
 .status { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.theme-btn {
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+  border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.theme-btn:hover { color: var(--ink); }
+.acct { font-size: 16px; font-weight: 700; color: var(--ink); margin: 1px 0 3px; }
+.acct a { color: inherit; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; }
 .dot.stale { background: var(--bad); }
 .tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 16px; scrollbar-width: none; }
@@ -113,7 +125,8 @@ td.n, th.n { text-align: right; }
 <div class="wrap">
   <header>
     <h1>Whaletail <span>· live positions</span></h1>
-    <div class="status"><span class="dot" id="dot"></span><span id="updated">Loading…</span></div>
+    <div class="status"><span class="dot" id="dot"></span><span id="updated">Loading…</span>
+      <button type="button" class="theme-btn" id="theme" aria-label="Switch light or dark mode"></button></div>
   </header>
 
   <nav class="tabs" id="tabs" aria-label="Sport"></nav>
@@ -147,6 +160,16 @@ td.n, th.n { text-align: right; }
 <div class="tip" id="tip" role="tooltip"></div>
 
 <script>
+function themeLabel() {
+  $("theme").textContent = document.documentElement.dataset.theme === "dark" ? "☀️ Light mode" : "🌙 Dark mode";
+}
+document.getElementById("theme").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("wt-theme", next); } catch (e) {}
+  themeLabel(); render();
+});
+
 const KEY = new URLSearchParams(location.search).get("key") || "";
 const state = { data: null, sport: "all", fetchedAt: 0 };
 try { state.sport = localStorage.getItem("wt-sport") || "all"; } catch (e) {}
@@ -195,11 +218,11 @@ $("tabs").addEventListener("click", (e) => {
 function crowdLines(p) {
   const parts = [];
   if (p.agree.length) {
-    const who = p.agree.map(a => `${esc(a.account)} ${usd(a.amount)} <span style="color:var(--muted)">(${esc(a.picks.join(", "))})</span>`).join(" · ");
+    const who = p.agree.map(a => `<b style="color:var(--ink)">${esc(a.account)}</b> ${usd(a.amount)} <span style="color:var(--muted)">(${esc(a.picks.join(", "))})</span>`).join(" · ");
     parts.push(`<div class="line"><span class="tag agree">🤝 AGREE ${usd(p.agree_total)}</span><span class="who">${who}</span></div>`);
   }
   if (p.oppose.length) {
-    const who = p.oppose.map(a => `${esc(a.account)} ${usd(a.amount)} <span style="color:var(--muted)">(${esc(a.picks.join(", "))})</span>`).join(" · ");
+    const who = p.oppose.map(a => `<b style="color:var(--ink)">${esc(a.account)}</b> ${usd(a.amount)} <span style="color:var(--muted)">(${esc(a.picks.join(", "))})</span>`).join(" · ");
     parts.push(`<div class="line"><span class="tag oppose">⚔️ OPPOSE ${usd(p.oppose_total)}</span><span class="who">${who}</span></div>`);
   }
   if (!parts.length) parts.push(`<span class="none">No other accounts on this game</span>`);
@@ -218,10 +241,10 @@ function renderList(now) {
       <div class="rank">${i + 1}</div>
       <div>
         <div class="pick">${esc(p.pick)}</div>
+        <div class="acct">👤 <a href="${esc(p.account_url)}" target="_blank" rel="noopener">${esc(p.account)}</a></div>
         <div class="meta">
           ${p.league ? `<span class="badge">${esc(p.league)}</span>` : ""}
           <a href="${esc(p.event_url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
-          <a href="${esc(p.account_url)}" target="_blank" rel="noopener"><b>${esc(p.account)}</b></a>
           <span>${st.html}</span>
         </div>
       </div>
@@ -273,10 +296,10 @@ function renderChart(now, rows, boxId, tableId, emptyMsg) {
     const st = startText(p, now).text;
     if (narrow) {
       s += `<text x="${plotX}" y="${y0 + 14}" font-size="12" fill="var(--ink)" font-weight="600">${esc(chartLabel(p))}</text>`;
-      s += `<text x="${plotX}" y="${y0 + 29}" font-size="11" fill="var(--ink-2)">${esc(p.account)} · ${esc(st)}</text>`;
+      s += `<text x="${plotX}" y="${y0 + 29}" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}</text>`;
     } else {
       s += `<text x="${labelW}" y="${by + 6}" text-anchor="end" font-size="12" fill="var(--ink)" font-weight="600">${esc(chartLabel(p))}</text>`;
-      s += `<text x="${labelW}" y="${by + 19}" text-anchor="end" font-size="11" fill="var(--ink-2)">${esc(p.account)} · ${esc(st)}</text>`;
+      s += `<text x="${labelW}" y="${by + 19}" text-anchor="end" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}</text>`;
     }
     const ownW = p.cost * scale, agW = p.agree_total * scale, opW = p.oppose_total * scale;
     // own stake (anchored at zero, rounded data end only if nothing stacks after it)
@@ -358,6 +381,7 @@ async function load() {
   }
 }
 
+themeLabel();
 load();
 setInterval(load, 15000);
 setInterval(() => { if (state.data) { const n = Date.now() / 1000; renderStatus(n); } }, 1000);
