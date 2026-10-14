@@ -15,6 +15,7 @@ import os
 import time
 from urllib.parse import parse_qs, urlsplit
 
+from .fees import fill_mix
 from .markets import SPORTS, is_live, sport_of
 from .watcher import american, game_key, lean, pick_label, relate
 
@@ -53,7 +54,8 @@ def build_snapshot(results, names, crowd_min=250.0, now=None):
                 "shares": round(float(r.get("size") or 0), 2),
                 "avg": avg, "cur": cur, "avg_odds": american(avg), "cur_odds": american(cur),
                 "pnl": round(float(r.get("cashPnl") or 0), 2),
-                "start": gs, "status": status,
+                "start": gs, "status": status, "cond": cond, "asset": str(r.get("asset")),
+                "fill": None,
                 "_cond": cond, "_asset": str(r.get("asset")),
                 "_game": game_key(r.get("eventSlug") or m.get("slug") or r.get("slug")),
                 "_lean": lean(title, outcome),
@@ -102,6 +104,7 @@ class Dashboard:
         self.app, self.key, self.port, self.refresh = app, key or "", int(port), max(10, int(refresh))
         self.snapshot = None
         self.error = None
+        self._mix = {}           # (address, asset) -> (shares when checked, fill_mix result)
 
     def enabled(self):
         return bool(self.key)
@@ -118,7 +121,42 @@ class Dashboard:
             pool, meta, _, _ = r
             results[a] = (pool, meta)
         names = {a: (v.get("name") or a[:10]) for a, v in w.wallets.items()}
-        self.snapshot = build_snapshot(results, names, w.crowd_min())
+        snap = build_snapshot(results, names, w.crowd_min())
+        await self.add_fill_mix(snap)
+        self.snapshot = snap
+
+    @staticmethod
+    def shown(snap, now=None):
+        """Rows any view can show: top 10 per tab (all + each sport) and each tab's 2-hour window."""
+        now = now or time.time()
+        rows = snap["positions"]
+        out = {}
+        for key in ["all"] + [s["key"] for s in snap["sports"]]:
+            tab = rows if key == "all" else [r for r in rows if r["sport"] == key]
+            soon = [r for r in tab if r["status"] == "upcoming" and r["start"] and 0 < r["start"] - now <= 7200]
+            for r in tab[:10] + soon[:10]:
+                out[r["id"]] = r
+        return list(out.values())
+
+    async def add_fill_mix(self, snap):
+        """Taken (fees paid) vs laid (limit orders) for every row on screen. Cached until
+        the position size changes, so steady positions cost no extra API calls."""
+        sem = asyncio.Semaphore(6)
+
+        async def one(r):
+            k = (r["address"], r["asset"])
+            hit = self._mix.get(k)
+            if hit and abs(hit[0] - r["shares"]) < 1:
+                r["fill"] = hit[1]
+                return
+            async with sem:
+                try:
+                    acts = await self.app.api.activity(r["address"], limit=500, market=r["cond"])
+                except Exception:
+                    return
+            r["fill"] = fill_mix(acts, r["asset"])
+            self._mix[k] = (r["shares"], r["fill"])
+        await asyncio.gather(*(one(r) for r in self.shown(snap)))
 
     async def loop(self):
         while True:

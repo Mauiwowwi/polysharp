@@ -76,3 +76,31 @@ def _f(x):
         return float(x)
     except (TypeError, ValueError):
         return None
+
+
+def fill_mix(activity_rows, asset=None, side="BUY"):
+    """How a position was built: $-share taken (fees paid) vs laid (resting limit orders).
+
+    Returns {taker_share, fees, sample, style} or None when no fill had usdc info.
+    style: 'taken' (>=60% taker), 'laid' (<=40%), else 'mixed'."""
+    tot = tk = fees = 0.0
+    n = 0
+    for r in activity_rows or []:
+        if (r.get("type") or "TRADE") != "TRADE" or (r.get("side") or "").upper() != side:
+            continue
+        if asset is not None and str(r.get("asset")) != str(asset):
+            continue
+        a = analyze_fill(float(r.get("size") or 0), float(r.get("price") or 0),
+                         _f(r.get("usdcSize")), side)
+        if not a:
+            continue
+        n += 1
+        tot += a["notional"]
+        if a["taker"]:
+            tk += a["notional"]
+            fees += a["fee"]
+    if not tot:
+        return None
+    share = tk / tot
+    style = "taken" if share >= 0.6 else "laid" if share <= 0.4 else "mixed"
+    return {"taker_share": round(share, 3), "fees": round(fees, 2), "sample": n, "style": style}

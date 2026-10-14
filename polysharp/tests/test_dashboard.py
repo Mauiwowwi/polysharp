@@ -94,3 +94,39 @@ async def test_http_needs_key_and_serves_page_and_json():
 
 def test_dashboard_off_without_key():
     assert not Dashboard(app=None, key="").enabled()
+
+
+def test_fill_mix_taken_laid_mixed():
+    from polysharp.fees import fill_mix
+    # taker fill: usdc = size*price + fee (3% * p * (1-p) * size)
+    taker = {"type": "TRADE", "side": "BUY", "asset": "1", "size": 1000, "price": 0.5,
+             "usdcSize": 500 + 1000 * 0.03 * 0.25}
+    maker = {"type": "TRADE", "side": "BUY", "asset": "1", "size": 1000, "price": 0.5, "usdcSize": 500}
+    other = dict(maker, asset="2")
+    assert fill_mix([taker] * 4 + [maker, other], "1")["style"] == "taken"
+    assert fill_mix([maker] * 4 + [taker, other], "1")["style"] == "laid"
+    m = fill_mix([maker, taker], "1")
+    assert m["style"] == "mixed" and m["taker_share"] == 0.5 and m["fees"] == 7.5
+    assert fill_mix([other], "1") is None
+
+
+@pytest.mark.asyncio
+async def test_dashboard_adds_fill_mix_and_caches_it():
+    calls = []
+
+    class API:
+        async def activity(self, user, limit=100, market=None):
+            calls.append((user, market))
+            return [{"type": "TRADE", "side": "BUY", "asset": "g", "size": 100, "price": 0.5, "usdcSize": 50}]
+
+    class App:
+        api = API()
+    d = Dashboard(App(), key="k")
+    snap = snapshot()
+    await d.add_fill_mix(snap)
+    hrh = next(r for r in snap["positions"] if r["account"] == "HomeRunHazard" and r["asset"] == "g")
+    assert hrh["fill"]["style"] == "laid"
+    n = len(calls)
+    snap2 = snapshot()
+    await d.add_fill_mix(snap2)
+    assert len(calls) == n                              # unchanged positions -> cached

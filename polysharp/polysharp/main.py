@@ -12,6 +12,7 @@ import websockets
 from .api import PolyAPI
 from .config import Config
 from .dashboard import Dashboard
+from .fees import fill_mix
 from .markets import LEAGUES, SPORTS, Markets, sport_of
 from .selector import deep_eval, passes, suggest
 from .store import Store
@@ -43,6 +44,16 @@ async def egress_check(cfg, api):
         except Exception as e:
             out.append(("Websocket", False, str(e)[:120]))
     return out
+
+
+def fill_tag(mix):
+    """'🚨 TAKEN 92%' (paid fees) / '🧱 LAID 85%' (resting limits) / '⚖️ MIXED 55% taken'."""
+    t = mix["taker_share"]
+    if mix["style"] == "taken":
+        return f"🚨 TAKEN {t:.0%}"
+    if mix["style"] == "laid":
+        return f"🧱 LAID {1 - t:.0%}"
+    return f"⚖️ MIXED {t:.0%} taken"
 
 
 def profile_link(addr, name):
@@ -217,15 +228,20 @@ class App:
         return (pool[:n] if n else pool), meta, len(pool), other
 
     async def trade_count(self, addr, cond, asset):
+        """(number of buys on this outcome, taken-vs-laid mix) from the market's activity."""
         try:
             rows = await self.api.activity(addr, limit=500, market=cond)
         except Exception:
             return None
-        return sum(1 for r in rows if str(r.get("asset")) == str(asset)
-                   and (r.get("side") or "").upper() == "BUY")
+        n = sum(1 for r in rows if str(r.get("asset")) == str(asset)
+                and (r.get("side") or "").upper() == "BUY")
+        return n, fill_mix(rows, asset)
 
     @staticmethod
     def position_card(i, r, m, n_trades, now, who=None, crowd=None):
+        mix = None
+        if isinstance(n_trades, tuple):
+            n_trades, mix = n_trades
         cost = float(r.get("initialValue") or 0)
         shares = float(r.get("size") or 0)
         avg, cur = float(r.get("avgPrice") or 0), float(r.get("curPrice") or 0)
@@ -244,7 +260,8 @@ class App:
                  f"<b>{i}. {dot} ${cost:,.0f}</b>" + (f" · {who}" if who else "") + when,
                  f"{league}<a href=\"{link}\">{esc(r.get('title'))}</a>",
                  f"Outcome: <b>{esc(pick_label(r.get('title'), r.get('outcome'), m.get('event_title')))}</b>",
-                 f"Trades: {n_trades if n_trades is not None else '—'} | Shares: {shares:,.0f}",
+                 f"Trades: {n_trades if n_trades is not None else '—'} | Shares: {shares:,.0f}"
+                 + (f" | {fill_tag(mix)}" if mix else ""),
                  f"Cost: ${cost:,.0f} | Payout: ${shares:,.0f}",
                  f"💰 Profit if it wins: {'+' if shares >= cost else '−'}${abs(shares - cost):,.0f}",
                  f"Avg: {avg * 100:.1f}¢ ({american(avg)}) | Last: {cur * 100:.1f}¢ ({american(cur)})"]

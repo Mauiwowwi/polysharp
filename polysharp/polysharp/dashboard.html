@@ -100,6 +100,7 @@ td.n, th.n { text-align: right; }
 .pick { font-weight: 650; font-size: 15px; }
 .meta { color: var(--ink-2); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .badge { display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 11px; font-weight: 600; background: var(--chip); color: var(--ink-2); }
+.fill { display: inline-block; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 700; letter-spacing: .02em; background: var(--chip); color: var(--ink); vertical-align: 2px; margin-left: 6px; }
 .badge.live { background: transparent; color: var(--live); border: 1px solid var(--live); }
 .money { text-align: right; font-variant-numeric: tabular-nums; }
 .money .stake { font-weight: 650; font-size: 15px; }
@@ -152,7 +153,7 @@ td.n, th.n { text-align: right; }
       <span><i style="background:var(--s-oppose)"></i>Other accounts opposing</span>
     </div>
     <div class="chart" id="chart-all"></div>
-    <p class="list-head">Details</p>
+    <p class="list-head">Details · <span style="color:var(--muted)">🚨 TAKEN = mostly paid fees to cross the spread · 🧱 LAID = mostly resting limit orders · ⚖️ MIXED = about half each</span></p>
     <div id="list"></div>
   </section>
   <p class="err" id="err" hidden></p>
@@ -195,6 +196,21 @@ function startText(p, now) {
   else t = new Date(p.start * 1000).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric"});
   const clock = new Date(p.start * 1000).toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"});
   return {html: `⏳ ${esc(t)} <span style="color:var(--muted)">· ${esc(clock)}</span>`, text: t};
+}
+
+function fillTag(p) {
+  const f = p.fill;
+  if (!f) return "";
+  const t = Math.round(f.taker_share * 100);
+  const fees = f.fees >= 1 ? ` · paid ${usdFull(f.fees)} fees` : "";
+  if (f.style === "taken") return `<span class="fill" title="Bought mostly by crossing the spread${fees}">🚨 TAKEN ${t}%</span>`;
+  if (f.style === "laid") return `<span class="fill" title="Bought mostly with resting limit orders (no fees)">🧱 LAID ${100 - t}%</span>`;
+  return `<span class="fill" title="About half taken, half laid${fees}">⚖️ MIXED ${t}% taken</span>`;
+}
+function fillShort(p) {
+  const f = p.fill;
+  if (!f) return "";
+  return f.style === "taken" ? " · taken" : f.style === "laid" ? " · laid" : " · mixed";
 }
 
 function filtered() {
@@ -240,7 +256,7 @@ function renderList(now) {
     return `<div class="pos">
       <div class="rank">${i + 1}</div>
       <div>
-        <div class="pick">${esc(p.pick)}</div>
+        <div class="pick">${esc(p.pick)}${fillTag(p)}</div>
         <div class="acct">👤 <a href="${esc(p.account_url)}" target="_blank" rel="noopener">${esc(p.account)}</a></div>
         <div class="meta">
           ${p.league ? `<span class="badge">${esc(p.league)}</span>` : ""}
@@ -296,10 +312,10 @@ function renderChart(now, rows, boxId, tableId, emptyMsg) {
     const st = startText(p, now).text;
     if (narrow) {
       s += `<text x="${plotX}" y="${y0 + 14}" font-size="12" fill="var(--ink)" font-weight="600">${esc(chartLabel(p))}</text>`;
-      s += `<text x="${plotX}" y="${y0 + 29}" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}</text>`;
+      s += `<text x="${plotX}" y="${y0 + 29}" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}${esc(fillShort(p))}</text>`;
     } else {
       s += `<text x="${labelW}" y="${by + 6}" text-anchor="end" font-size="12" fill="var(--ink)" font-weight="600">${esc(chartLabel(p))}</text>`;
-      s += `<text x="${labelW}" y="${by + 19}" text-anchor="end" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}</text>`;
+      s += `<text x="${labelW}" y="${by + 19}" text-anchor="end" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}${esc(fillShort(p))}</text>`;
     }
     const ownW = p.cost * scale, agW = p.agree_total * scale, opW = p.oppose_total * scale;
     // own stake (anchored at zero, rounded data end only if nothing stacks after it)
@@ -317,8 +333,8 @@ function renderChart(now, rows, boxId, tableId, emptyMsg) {
     h.addEventListener("mousemove", (e) => showTip(e, rows[+h.dataset.i], now));
     h.addEventListener("mouseleave", hideTip);
   });
-  if (tableId) $(tableId).innerHTML = `<table><thead><tr><th>Pick</th><th>Account</th><th>Starts</th><th class="n">Stake</th><th class="n">Agree</th><th class="n">Oppose</th></tr></thead><tbody>${
-    rows.map(p => `<tr><td>${esc(p.pick)}</td><td>${esc(p.account)}</td><td>${esc(startText(p, now).text)}</td><td class="n">${usdFull(p.cost)}</td><td class="n">${p.agree_total ? usdFull(p.agree_total) : "—"}</td><td class="n">${p.oppose_total ? usdFull(p.oppose_total) : "—"}</td></tr>`).join("")
+  if (tableId) $(tableId).innerHTML = `<table><thead><tr><th>Pick</th><th>Account</th><th>Starts</th><th>Filled</th><th class="n">Stake</th><th class="n">Agree</th><th class="n">Oppose</th></tr></thead><tbody>${
+    rows.map(p => `<tr><td>${esc(p.pick)}</td><td>${esc(p.account)}</td><td>${esc(startText(p, now).text)}</td><td>${esc(fillShort(p).replace(" · ", "") || "—")}</td><td class="n">${usdFull(p.cost)}</td><td class="n">${p.agree_total ? usdFull(p.agree_total) : "—"}</td><td class="n">${p.oppose_total ? usdFull(p.oppose_total) : "—"}</td></tr>`).join("")
   }</tbody></table>`;
 }
 
@@ -338,6 +354,7 @@ function showTip(e, p, now) {
   t.innerHTML = `<b>${esc(p.pick)}</b><div style="color:var(--ink-2);margin-bottom:6px">${esc(p.title)}<br>${esc(p.account)} · ${esc(startText(p, now).text)}</div>
     <div class="row"><span class="k">Stake</span><span>${usdFull(p.cost)}</span></div>
     <div class="row"><span class="k">Avg / last</span><span>${esc(p.avg_odds)} / ${esc(p.cur_odds)}</span></div>
+    ${p.fill ? `<div class="row"><span class="k">Filled</span><span>${Math.round(p.fill.taker_share * 100)}% taken · ${100 - Math.round(p.fill.taker_share * 100)}% laid</span></div>` : ""}
     ${p.agree.length ? `<div style="margin-top:6px"><b>🤝 Agree ${usdFull(p.agree_total)}</b></div>${people(p.agree)}` : ""}
     ${p.oppose.length ? `<div style="margin-top:6px"><b>⚔️ Oppose ${usdFull(p.oppose_total)}</b></div>${people(p.oppose)}` : ""}`;
   const pad = 14, tw = 280;
