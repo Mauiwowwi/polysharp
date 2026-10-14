@@ -91,6 +91,12 @@ class Config:
     sports_only_alerts: bool = field(default_factory=lambda: _env("SPORTS_ONLY_ALERTS", True, bool))
     pregame_only_alerts: bool = field(default_factory=lambda: _env("PREGAME_ONLY_ALERTS", True, bool))
 
+    # --- Web dashboard (served by the bot; off until DASHBOARD_KEY is set) ----
+    dashboard_key: str = field(default_factory=lambda: _env("DASHBOARD_KEY", ""))
+    port: int = field(default_factory=lambda: _env("PORT", 8080, int))
+    dashboard_refresh: int = field(default_factory=lambda: _env("DASHBOARD_REFRESH", 30, int))
+    public_domain: str = field(default_factory=lambda: _env("RAILWAY_PUBLIC_DOMAIN", ""))
+
     # --- Transport ----------------------------------------------------------
     use_websocket: bool = field(default_factory=lambda: _env("USE_WEBSOCKET", True, bool))
     ws_url: str = field(default_factory=lambda: _env("WS_URL", "wss://ws-live-data.polymarket.com"))

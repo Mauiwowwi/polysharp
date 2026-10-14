@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Whaletail Live</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --raised: #ffffff;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --s-own: #2a78d6; --s-agree: #1baf7a; --s-oppose: #eb6834;
+  --good: #006300; --bad: #d03b3b; --live: #d03b3b;
+  --chip: #f1f0ec; --accent-soft: #e8f0fb;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --raised: #20201f;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --s-own: #3987e5; --s-agree: #199e70; --s-oppose: #d95926;
+    --good: #0ca30c; --bad: #e66767; --live: #e66767;
+    --chip: #262624; --accent-soft: #1b2738;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --raised: #20201f;
+  --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --s-own: #3987e5; --s-agree: #199e70; --s-oppose: #d95926;
+  --good: #0ca30c; --bad: #e66767; --live: #e66767;
+  --chip: #262624; --accent-soft: #1b2738;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--page); color: var(--ink);
+  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 20px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin-bottom: 16px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+h1 span { color: var(--muted); font-weight: 500; }
+.status { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; }
+.dot.stale { background: var(--bad); }
+.tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 16px; scrollbar-width: none; }
+.tabs button {
+  flex: none; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+  border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.tabs button[aria-pressed="true"] { background: var(--ink); color: var(--page); border-color: var(--ink); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 2px; }
+.card .sub { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+#chart { width: 100%; position: relative; }
+#chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.empty { color: var(--muted); padding: 18px 0; text-align: center; }
+.tip {
+  position: fixed; pointer-events: none; z-index: 10; max-width: 280px;
+  background: var(--raised); color: var(--ink); border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.18); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+  opacity: 0; transition: opacity .08s;
+}
+.tip b { font-size: 13px; }
+.tip .row { display: flex; justify-content: space-between; gap: 12px; }
+.tip .k { color: var(--ink-2); }
+details.table { margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+details.table summary { cursor: pointer; }
+table { width: 100%; border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+th { color: var(--muted); font-weight: 500; }
+td.n, th.n { text-align: right; }
+
+.pos { display: grid; grid-template-columns: 28px 1fr auto; gap: 4px 12px; padding: 12px 0; border-top: 1px solid var(--grid); }
+.pos:first-of-type { border-top: 0; }
+.rank { color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 1px; }
+.pick { font-weight: 650; font-size: 15px; }
+.meta { color: var(--ink-2); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.badge { display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 11px; font-weight: 600; background: var(--chip); color: var(--ink-2); }
+.badge.live { background: transparent; color: var(--live); border: 1px solid var(--live); }
+.money { text-align: right; font-variant-numeric: tabular-nums; }
+.money .stake { font-weight: 650; font-size: 15px; }
+.money .pnl { font-size: 12px; }
+.up { color: var(--good); } .down { color: var(--bad); }
+.nums { grid-column: 2 / 4; color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.crowd { grid-column: 2 / 4; display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.crowd .line { font-size: 13px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.crowd .tag { font-size: 11px; font-weight: 700; letter-spacing: .02em; border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+.crowd .tag.agree { box-shadow: inset 3px 0 0 var(--s-agree); background: var(--chip); }
+.crowd .tag.oppose { box-shadow: inset 3px 0 0 var(--s-oppose); background: var(--chip); }
+.crowd .who { color: var(--ink-2); }
+.crowd .none { color: var(--muted); font-size: 12px; }
+.err { color: var(--bad); font-size: 13px; }
+@media (max-width: 560px) {
+  .pos { grid-template-columns: 22px 1fr; }
+  .money { grid-column: 2; text-align: left; display: flex; gap: 10px; align-items: baseline; }
+  .nums, .crowd { grid-column: 2; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Whaletail <span>· live positions</span></h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="updated">Loading…</span></div>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="Sport"></nav>
+
+  <section class="card" aria-labelledby="h-soon">
+    <h2 id="h-soon">Starting in the next 2 hours</h2>
+    <p class="sub">Biggest 10 positions in games that start within 2 hours. Bars to the right are money on that side (the account plus anyone agreeing); bars to the left are money against it.</p>
+    <div class="legend">
+      <span><i style="background:var(--s-own)"></i>This account</span>
+      <span><i style="background:var(--s-agree)"></i>Other accounts agreeing</span>
+      <span><i style="background:var(--s-oppose)"></i>Other accounts opposing</span>
+    </div>
+    <div id="chart"></div>
+    <details class="table"><summary>Show as table</summary><div id="chart-table"></div></details>
+  </section>
+
+  <section class="card" aria-labelledby="h-top">
+    <h2 id="h-top">Top 10 open positions</h2>
+    <p class="sub" id="top-sub">Across every account in the feed, largest stake first.</p>
+    <div id="list"></div>
+  </section>
+  <p class="err" id="err" hidden></p>
+</div>
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script>
+const KEY = new URLSearchParams(location.search).get("key") || "";
+const state = { data: null, sport: "all", fetchedAt: 0 };
+try { state.sport = localStorage.getItem("wt-sport") || "all"; } catch (e) {}
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const usd = (x) => {
+  const a = Math.abs(x);
+  const v = a >= 1e6 ? (a / 1e6).toFixed(2) + "M" : a >= 1e4 ? (a / 1e3).toFixed(1) + "K" : a.toLocaleString(undefined, {maximumFractionDigits: 0});
+  return (x < 0 ? "−$" : "$") + v;
+};
+const usdFull = (x) => (x < 0 ? "−$" : "$") + Math.abs(x).toLocaleString(undefined, {maximumFractionDigits: 0});
+const cents = (p) => (p * 100).toFixed(1) + "¢";
+
+function startText(p, now) {
+  if (p.status === "live") return {html: '<span class="badge live">LIVE</span>', text: "live"};
+  if (!p.start) return {html: "", text: ""};
+  const mins = (p.start - now) / 60;
+  if (mins <= 0) return {html: '<span class="badge">started</span>', text: "started"};
+  let t;
+  if (mins < 60) t = `in ${Math.max(1, Math.floor(mins))}m`;
+  else if (mins < 48 * 60) t = `in ${Math.floor(mins / 60)}h ${String(Math.floor(mins % 60)).padStart(2, "0")}m`;
+  else t = new Date(p.start * 1000).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric"});
+  const clock = new Date(p.start * 1000).toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"});
+  return {html: `⏳ ${esc(t)} <span style="color:var(--muted)">· ${esc(clock)}</span>`, text: t};
+}
+
+function filtered() {
+  const rows = (state.data?.positions || []);
+  return state.sport === "all" ? rows : rows.filter(r => r.sport === state.sport);
+}
+
+function renderTabs() {
+  const sports = [{key: "all", label: "🌐 All sports"}, ...(state.data?.sports || [])];
+  if (!sports.some(s => s.key === state.sport)) state.sport = "all";
+  $("tabs").innerHTML = sports.map(s =>
+    `<button type="button" data-k="${esc(s.key)}" aria-pressed="${s.key === state.sport}">${esc(s.label)}</button>`).join("");
+}
+$("tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.sport = b.dataset.k;
+  try { localStorage.setItem("wt-sport", state.sport); } catch (err) {}
+  render();
+});
+
+function crowdLines(p) {
+  const parts = [];
+  if (p.agree.length) {
+    const who = p.agree.map(a => `${esc(a.account)} ${usd(a.amount)} <span style="color:var(--muted)">(${esc(a.picks.join(", "))})</span>`).join(" · ");
+    parts.push(`<div class="line"><span class="tag agree">🤝 AGREE ${usd(p.agree_total)}</span><span class="who">${who}</span></div>`);
+  }
+  if (p.oppose.length) {
+    const who = p.oppose.map(a => `${esc(a.account)} ${usd(a.amount)} <span style="color:var(--muted)">(${esc(a.picks.join(", "))})</span>`).join(" · ");
+    parts.push(`<div class="line"><span class="tag oppose">⚔️ OPPOSE ${usd(p.oppose_total)}</span><span class="who">${who}</span></div>`);
+  }
+  if (!parts.length) parts.push(`<span class="none">No other accounts on this game</span>`);
+  return parts.join("");
+}
+
+function renderList(now) {
+  const rows = filtered().slice(0, 10);
+  const label = state.sport === "all" ? "every sport" : (state.data.sports.find(s => s.key === state.sport)?.label || state.sport);
+  $("top-sub").textContent = `Across every account in the feed (${label}), largest stake first.`;
+  if (!rows.length) { $("list").innerHTML = `<div class="empty">No open positions here right now.</div>`; return; }
+  $("list").innerHTML = rows.map((p, i) => {
+    const st = startText(p, now);
+    const pnlCls = p.pnl >= 0 ? "up" : "down";
+    return `<div class="pos">
+      <div class="rank">${i + 1}</div>
+      <div>
+        <div class="pick">${esc(p.pick)}</div>
+        <div class="meta">
+          ${p.league ? `<span class="badge">${esc(p.league)}</span>` : ""}
+          <a href="${esc(p.event_url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+          <a href="${esc(p.account_url)}" target="_blank" rel="noopener"><b>${esc(p.account)}</b></a>
+          <span>${st.html}</span>
+        </div>
+      </div>
+      <div class="money"><div class="stake">${usdFull(p.cost)}</div><div class="pnl ${pnlCls}">${p.pnl >= 0 ? "▲" : "▼"} ${usdFull(p.pnl)}</div></div>
+      <div class="nums">
+        <span>Avg ${cents(p.avg)} (${esc(p.avg_odds)})</span>
+        <span>Last ${cents(p.cur)} (${esc(p.cur_odds)})</span>
+        <span>${Math.round(p.shares).toLocaleString()} sh → pays ${usdFull(p.shares)}</span>
+      </div>
+      <div class="crowd">${crowdLines(p)}</div>
+    </div>`;
+  }).join("");
+}
+
+function chartLabel(p) {
+  // totals need the matchup to make sense on their own
+  return /^(Over|Under) /.test(p.pick) && p.title.includes(":") ? `${p.title.split(":")[0]} · ${p.pick}` : p.pick;
+}
+
+function soonRows(now) {
+  return filtered().filter(p => p.status === "upcoming" && p.start && p.start > now && p.start - now <= 7200).slice(0, 10);
+}
+
+function renderChart(now) {
+  const rows = soonRows(now);
+  const box = $("chart");
+  if (!rows.length) {
+    box.innerHTML = `<div class="empty">Nothing from your accounts starts in the next 2 hours.</div>`;
+    $("chart-table").innerHTML = "";
+    return;
+  }
+  const W = Math.max(320, box.clientWidth || 800);
+  const narrow = W < 640;
+  const labelW = narrow ? 0 : Math.min(300, W * 0.34);
+  const rowH = narrow ? 64 : 34, barH = 14, top = 6;
+  const plotX = labelW + 8, plotW = W - plotX - 8;
+  const maxR = Math.max(...rows.map(p => p.cost + p.agree_total), 1);
+  const maxL = Math.max(...rows.map(p => p.oppose_total), 0);
+  // shared scale; left side only takes room when there is opposition
+  const total = maxR + maxL;
+  const padL = maxL ? 60 : 0, padR = 116;          // room for the value labels at each bar end
+  const scale = (plotW - padL - padR) / total;
+  const zeroX = plotX + padL + maxL * scale;
+  const H = top + rows.length * rowH + 6;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Top positions starting in the next 2 hours">`;
+  s += `<line x1="${zeroX}" x2="${zeroX}" y1="0" y2="${H}" stroke="var(--axis)" stroke-width="1"/>`;
+  rows.forEach((p, i) => {
+    const y0 = top + i * rowH;
+    const by = narrow ? y0 + 38 : y0 + (rowH - barH) / 2;
+    const st = startText(p, now).text;
+    if (narrow) {
+      s += `<text x="${plotX}" y="${y0 + 14}" font-size="12" fill="var(--ink)" font-weight="600">${esc(chartLabel(p))}</text>`;
+      s += `<text x="${plotX}" y="${y0 + 29}" font-size="11" fill="var(--ink-2)">${esc(p.account)} · ${esc(st)}</text>`;
+    } else {
+      s += `<text x="${labelW}" y="${by + 6}" text-anchor="end" font-size="12" fill="var(--ink)" font-weight="600">${esc(chartLabel(p))}</text>`;
+      s += `<text x="${labelW}" y="${by + 19}" text-anchor="end" font-size="11" fill="var(--ink-2)">${esc(p.account)} · ${esc(st)}</text>`;
+    }
+    const ownW = p.cost * scale, agW = p.agree_total * scale, opW = p.oppose_total * scale;
+    // own stake (anchored at zero, rounded data end only if nothing stacks after it)
+    s += bar(zeroX, by, ownW, barH, "var(--s-own)", agW > 0 ? "none" : "right");
+    if (agW > 0) s += bar(zeroX + ownW + 2, by, Math.max(agW - 2, 1), barH, "var(--s-agree)", "right");
+    if (opW > 0) s += bar(zeroX - opW, by, opW, barH, "var(--s-oppose)", "left");
+    const rTxt = usd(p.cost) + (p.agree_total ? ` +${usd(p.agree_total)}` : "");
+    s += `<text x="${zeroX + ownW + (agW ? agW : 0) + 6}" y="${by + 11}" font-size="11" fill="var(--ink-2)">${esc(rTxt)}</text>`;
+    if (opW > 0) s += `<text x="${zeroX - opW - 6}" y="${by + 11}" text-anchor="end" font-size="11" fill="var(--ink-2)">${esc(usd(p.oppose_total))}</text>`;
+    s += `<rect class="hit" data-i="${i}" x="0" y="${y0}" width="${W}" height="${rowH}" fill="transparent"/>`;
+  });
+  s += `</svg>`;
+  box.innerHTML = s;
+  box.querySelectorAll(".hit").forEach(h => {
+    h.addEventListener("mousemove", (e) => showTip(e, rows[+h.dataset.i], now));
+    h.addEventListener("mouseleave", hideTip);
+  });
+  $("chart-table").innerHTML = `<table><thead><tr><th>Pick</th><th>Account</th><th>Starts</th><th class="n">Stake</th><th class="n">Agree</th><th class="n">Oppose</th></tr></thead><tbody>${
+    rows.map(p => `<tr><td>${esc(p.pick)}</td><td>${esc(p.account)}</td><td>${esc(startText(p, now).text)}</td><td class="n">${usdFull(p.cost)}</td><td class="n">${p.agree_total ? usdFull(p.agree_total) : "—"}</td><td class="n">${p.oppose_total ? usdFull(p.oppose_total) : "—"}</td></tr>`).join("")
+  }</tbody></table>`;
+}
+
+function bar(x, y, w, h, fill, round) {
+  if (w <= 0) return "";
+  const r = Math.min(4, w / 2, h / 2);
+  if (round === "none") return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}"/>`;
+  // square on the baseline side, 4px rounded on the data end
+  if (round === "right")
+    return `<path d="M${x},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${y + h - r} Q${x + w},${y + h} ${x + w - r},${y + h} H${x} Z" fill="${fill}"/>`;
+  return `<path d="M${x + w},${y} H${x + r} Q${x},${y} ${x},${y + r} V${y + h - r} Q${x},${y + h} ${x + r},${y + h} H${x + w} Z" fill="${fill}"/>`;
+}
+
+function showTip(e, p, now) {
+  const t = $("tip");
+  const people = (list) => list.map(a => `<div class="row"><span class="k">${esc(a.account)}</span><span>${usdFull(a.amount)}</span></div><div style="color:var(--muted);margin-bottom:2px">${esc(a.picks.join(", "))}</div>`).join("");
+  t.innerHTML = `<b>${esc(p.pick)}</b><div style="color:var(--ink-2);margin-bottom:6px">${esc(p.title)}<br>${esc(p.account)} · ${esc(startText(p, now).text)}</div>
+    <div class="row"><span class="k">Stake</span><span>${usdFull(p.cost)}</span></div>
+    <div class="row"><span class="k">Avg / last</span><span>${esc(p.avg_odds)} / ${esc(p.cur_odds)}</span></div>
+    ${p.agree.length ? `<div style="margin-top:6px"><b>🤝 Agree ${usdFull(p.agree_total)}</b></div>${people(p.agree)}` : ""}
+    ${p.oppose.length ? `<div style="margin-top:6px"><b>⚔️ Oppose ${usdFull(p.oppose_total)}</b></div>${people(p.oppose)}` : ""}`;
+  const pad = 14, tw = 280;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + tw > innerWidth) x = e.clientX - tw - pad;
+  t.style.left = Math.max(8, x) + "px";
+  t.style.top = Math.min(y, innerHeight - t.offsetHeight - 8) + "px";
+  t.style.opacity = 1;
+}
+function hideTip() { $("tip").style.opacity = 0; }
+
+function renderStatus(now) {
+  const d = state.data;
+  if (!d || !d.updated) { $("updated").textContent = "Building first snapshot…"; return; }
+  const age = Math.max(0, Math.round(now - d.updated));
+  const stale = Date.now() / 1000 - state.fetchedAt > 3 * (d.refresh || 30);
+  $("dot").classList.toggle("stale", stale);
+  $("updated").textContent = `Updated ${age < 60 ? age + "s" : Math.round(age / 60) + "m"} ago · ${d.active_accounts} of ${d.accounts} accounts holding · refreshes every ${d.refresh}s`;
+}
+
+function render() {
+  if (!state.data) return;
+  const now = Date.now() / 1000;
+  renderTabs(); renderStatus(now); renderChart(now); renderList(now);
+}
+
+async function load() {
+  try {
+    const r = await fetch(`/api/data?key=${encodeURIComponent(KEY)}`, {cache: "no-store"});
+    if (r.status === 403) { $("err").hidden = false; $("err").textContent = "This link is missing the dashboard key. Use the full link with ?key=…"; return; }
+    state.data = await r.json();
+    state.fetchedAt = Date.now() / 1000;
+    $("err").hidden = !state.data.error;
+    $("err").textContent = state.data.error ? "Last refresh failed: " + state.data.error : "";
+    render();
+  } catch (e) {
+    $("dot").classList.add("stale");
+  }
+}
+
+load();
+setInterval(load, 15000);
+setInterval(() => { if (state.data) { const n = Date.now() / 1000; renderStatus(n); } }, 1000);
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(render, 120); });
+</script>
+</body>
+</html>

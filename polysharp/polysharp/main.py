@@ -11,6 +11,7 @@ import websockets
 
 from .api import PolyAPI
 from .config import Config
+from .dashboard import Dashboard
 from .markets import LEAGUES, SPORTS, Markets, sport_of
 from .selector import deep_eval, passes, suggest
 from .store import Store
@@ -155,6 +156,7 @@ class App:
         self.markets = Markets(self.api, self.store)
         self.tg = Telegram(self.cfg.tg_token, self.cfg.tg_chat_id, self.cfg.admin_ids)
         self.watcher = Watcher(self.cfg, self.api, self.store, self.tg, self.markets)
+        self.dashboard = Dashboard(self, self.cfg.dashboard_key, self.cfg.port, self.cfg.dashboard_refresh)
         self.busy = False
         self._register()
 
@@ -506,6 +508,7 @@ class App:
                         "/skip 0x… [days] — hide from shortlists\n"
                         "/min 5000 · /tier all|med|high · /takeronly on|off · /livehedges on|off\n"
                         "/crowdmin 250 — smallest 🤝/⚔️ holding that counts\n"
+                        "/dashboard — link to the live web dashboard (sent privately)\n"
                         "/mute 2h · /unmute\n"
                         "/topics [setup] · /bindtopic &lt;sport&gt; — sport tabs in the group")
             return out
@@ -694,6 +697,20 @@ class App:
                        "on positions you were alerted on pre-game."
                        if on else "Nothing in-game is sent at all."))
 
+        @tg.command("dashboard")
+        async def _dashboard(args):
+            if not cfg.dashboard_key:
+                return "Dashboard is off. Add a DASHBOARD_KEY variable on Railway (any long random text)."
+            link = self.dashboard_link()
+            if not link:
+                return ("Dashboard is running but has no public URL yet. On Railway: your service → "
+                        "Settings → Networking → Generate Domain, then redeploy.")
+            text = f"📊 <b>Live dashboard</b>\n{esc(link)}\nAnyone with this exact link can view it."
+            if str(tg.current_chat or "").startswith("-"):      # never post the key in the group
+                await tg.send_admins(text)
+                return "📊 Sent you the dashboard link privately."
+            return text
+
         @tg.command("crowdmin")
         async def _crowdmin(args):
             if args:
@@ -714,7 +731,7 @@ class App:
                        if on else "Alerting on all trades; conviction trades get ⚡."))
 
     ADMIN_ONLY = {"add", "remove", "skip", "suggest", "refresh", "min", "tier", "topics", "bindtopic",
-                  "takeronly", "livehedges", "mute", "unmute", "crowdmin"}
+                  "takeronly", "livehedges", "mute", "unmute", "crowdmin", "dashboard"}
 
     def _wallet_buttons(self, prefix="top"):
         names = sorted(self.watcher.wallets.items(), key=lambda kv: (kv[1].get("name") or kv[0]).lower())
@@ -737,11 +754,24 @@ class App:
         lines.append(await self.ensure_topics())
         lines.append(f"Chats: {len(self.tg.chat_ids)} · admins: {len(self.tg.admins)}"
                      + ("" if self.tg.admins else " ⚠️ set ADMIN_USER_IDS"))
+        lines.append(self.dashboard_status())
         await self.tg.send_admins("🚀 <b>PolySharp online</b>\n" + "\n".join(lines))
 
         await asyncio.gather(
             self.watcher.run_ws(), self.watcher.run_poller(),
-            self.tg.poll_commands(), self.morning_loop())
+            self.tg.poll_commands(), self.morning_loop(), self.dashboard.run())
+
+    def dashboard_link(self):
+        if not self.cfg.dashboard_key or not self.cfg.public_domain:
+            return None
+        return f"https://{self.cfg.public_domain}/?key={self.cfg.dashboard_key}"
+
+    def dashboard_status(self):
+        if not self.cfg.dashboard_key:
+            return "Dashboard: off (set DASHBOARD_KEY to turn it on)"
+        link = self.dashboard_link()
+        return (f"Dashboard: <a href=\"{link}\">open</a> · /dashboard for the link" if link
+                else "Dashboard: on, but no public URL yet (Railway → Settings → Networking → Generate Domain)")
 
 
 def main():

@@ -1,0 +1,96 @@
+"""Web dashboard: snapshot contents and key-gated HTTP serving."""
+import asyncio
+import json
+import time
+
+import pytest
+
+from polysharp.dashboard import Dashboard, build_snapshot
+
+NOW = 1_800_000_000
+A, B, C = ("0x" + ch * 40 for ch in "abc")
+EV = "cfb-uga-van-2026-10-03"
+
+
+def pos(cond, asset, title, outcome, size, avg, cur=None, event=EV):
+    return {"conditionId": cond, "asset": asset, "title": title, "outcome": outcome, "size": size,
+            "avgPrice": avg, "curPrice": cur if cur is not None else avg, "initialValue": size * avg,
+            "cashPnl": size * ((cur if cur is not None else avg) - avg), "eventSlug": event}
+
+
+def meta(start, league="cfb", title="Georgia vs. Vanderbilt"):
+    return {"sports": True, "game_start": start, "league": league, "event_title": title,
+            "slug": EV}
+
+
+def snapshot():
+    m = {"c255": meta(NOW + 45 * 60), "c245": meta(NOW + 45 * 60), "c235": meta(NOW + 45 * 60),
+         "ctot": meta(NOW + 45 * 60), "cnfl": meta(NOW + 5 * 3600, "nfl")}
+    results = {
+        A: ([pos("c255", "g", "Spread: Georgia (-25.5)", "Georgia", 12538, 0.48),
+             pos("cnfl", "s", "Spread: Browns (-3.5)", "Steelers", 1000, 0.5, event="nfl-pit-cle")], m),
+        B: ([pos("c255", "g", "Spread: Georgia (-25.5)", "Georgia", 12216, 0.48),
+             pos("c245", "g2", "Spread: Georgia (-24.5)", "Georgia", 509, 0.52),
+             pos("ctot", "o", "Georgia vs. Vanderbilt: O/U 52.5", "Over", 1000, 0.5)], m),
+        C: ([pos("c235", "v", "Spread: Georgia (-23.5)", "Vanderbilt", 21190, 0.519),
+             pos("c255", "v2", "Spread: Georgia (-25.5)", "Vanderbilt", 100, 0.5)], m),
+    }
+    names = {A: "HomeRunHazard", B: "UpTheBlues", C: "Kch-Temp"}
+    return build_snapshot(results, names, crowd_min=250, now=NOW)
+
+
+def test_snapshot_rows_sorted_with_cross_line_crowd():
+    snap = snapshot()
+    rows = snap["positions"]
+    assert [r["cost"] for r in rows] == sorted((r["cost"] for r in rows), reverse=True)
+    hrh = next(r for r in rows if r["account"] == "HomeRunHazard" and r["sport"] == "football"
+               and r["league"] == "CFB")
+    assert hrh["pick"] == "Georgia -25.5" and hrh["status"] == "upcoming"
+    # UpTheBlues: same market + alt line, added up into one entry; totals bet is unrelated
+    assert hrh["agree"] == [{"account": "UpTheBlues", "amount": round(12216 * 0.48 + 509 * 0.52, 2),
+                             "picks": ["Georgia -25.5", "Georgia -24.5"]}]
+    # Kch-Temp: Vanderbilt on two lines, summed (the $50 one alone would be under the floor)
+    opp = hrh["oppose"][0]
+    assert opp["account"] == "Kch-Temp" and opp["picks"] == ["Vanderbilt +23.5", "Vanderbilt +25.5"]
+    assert hrh["oppose_total"] == round(21190 * 0.519 + 50, 2)
+    assert not any(k.startswith("_") for k in hrh)
+    assert {s["key"] for s in snap["sports"]} == {"football"}
+    json.dumps(snap)                                   # JSON-ready
+
+
+def test_small_crowd_is_ignored():
+    m = {"c1": meta(NOW + 600)}
+    results = {A: ([pos("c1", "x", "Spread: Georgia (-25.5)", "Georgia", 10000, 0.5)], m),
+               B: ([pos("c1", "y", "Spread: Georgia (-25.5)", "Vanderbilt", 100, 0.5)], m)}
+    rows = build_snapshot(results, {A: "a", B: "b"}, crowd_min=250, now=NOW)["positions"]
+    assert rows[0]["oppose"] == [] and rows[0]["oppose_total"] == 0
+
+
+async def _get(port, path):
+    r, w = await asyncio.open_connection("127.0.0.1", port)
+    w.write(f"GET {path} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+    await w.drain()
+    data = await r.read()
+    w.close()
+    head, _, body = data.partition(b"\r\n\r\n")
+    return int(head.split()[1]), body
+
+
+@pytest.mark.asyncio
+async def test_http_needs_key_and_serves_page_and_json():
+    d = Dashboard(app=None, key="s3cret", port=0)
+    d.snapshot = snapshot()
+    server = await asyncio.start_server(d.handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        assert (await _get(port, "/health"))[0] == 200
+        assert (await _get(port, "/"))[0] == 403
+        assert (await _get(port, "/?key=wrong"))[0] == 403
+        code, body = await _get(port, "/?key=s3cret")
+        assert code == 200 and b"Starting in the next 2 hours" in body
+        code, body = await _get(port, "/api/data?key=s3cret")
+        assert code == 200 and json.loads(body)["positions"][0]["account"] == "Kch-Temp"
+
+
+def test_dashboard_off_without_key():
+    assert not Dashboard(app=None, key="").enabled()

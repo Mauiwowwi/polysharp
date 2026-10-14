@@ -157,3 +157,18 @@ python -m polysharp.main
 
 ## Tests
 `pip install pytest pytest-asyncio && pytest --asyncio-mode=auto tests`
+
+
+## Live web dashboard
+
+The bot also serves a web page with the top 10 open positions across every account (sport tabs, 🤝/⚔️ with who and how much), plus a chart of the biggest positions in games starting within the next 2 hours. It rebuilds every 30 s and the page refreshes itself.
+
+1. Railway → your service → **Variables**: add `DASHBOARD_KEY` = any long random text (it's the password in the link).
+2. Railway → your service → **Settings → Networking → Generate Domain**.
+3. Redeploy, then send `/dashboard` to the bot in your private chat to get the link (`https://<domain>/?key=<DASHBOARD_KEY>`).
+
+| Variable | Default | |
+|---|---|---|
+| `DASHBOARD_KEY` | (empty = off) | key required in the link |
+| `DASHBOARD_REFRESH` | 30 | seconds between rebuilds |
+| `PORT` | 8080 | set by Railway automatically |
