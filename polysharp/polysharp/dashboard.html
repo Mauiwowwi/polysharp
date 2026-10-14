@@ -62,8 +62,9 @@ h1 span { color: var(--muted); font-weight: 500; }
 .card .sub { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 8px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
-#chart { width: 100%; position: relative; }
-#chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart { width: 100%; position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.list-head { font-size: 13px; color: var(--ink-2); margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--grid); }
 .empty { color: var(--muted); padding: 18px 0; text-align: center; }
 .tip {
   position: fixed; pointer-events: none; z-index: 10; max-width: 280px;
@@ -125,13 +126,20 @@ td.n, th.n { text-align: right; }
       <span><i style="background:var(--s-agree)"></i>Other accounts agreeing</span>
       <span><i style="background:var(--s-oppose)"></i>Other accounts opposing</span>
     </div>
-    <div id="chart"></div>
+    <div class="chart" id="chart"></div>
     <details class="table"><summary>Show as table</summary><div id="chart-table"></div></details>
   </section>
 
   <section class="card" aria-labelledby="h-top">
     <h2 id="h-top">Top 10 open positions</h2>
     <p class="sub" id="top-sub">Across every account in the feed, largest stake first.</p>
+    <div class="legend">
+      <span><i style="background:var(--s-own)"></i>This account</span>
+      <span><i style="background:var(--s-agree)"></i>Other accounts agreeing</span>
+      <span><i style="background:var(--s-oppose)"></i>Other accounts opposing</span>
+    </div>
+    <div class="chart" id="chart-all"></div>
+    <p class="list-head">Details</p>
     <div id="list"></div>
   </section>
   <p class="err" id="err" hidden></p>
@@ -237,12 +245,11 @@ function soonRows(now) {
   return filtered().filter(p => p.status === "upcoming" && p.start && p.start > now && p.start - now <= 7200).slice(0, 10);
 }
 
-function renderChart(now) {
-  const rows = soonRows(now);
-  const box = $("chart");
+function renderChart(now, rows, boxId, tableId, emptyMsg) {
+  const box = $(boxId);
   if (!rows.length) {
-    box.innerHTML = `<div class="empty">Nothing from your accounts starts in the next 2 hours.</div>`;
-    $("chart-table").innerHTML = "";
+    box.innerHTML = `<div class="empty">${esc(emptyMsg)}</div>`;
+    if (tableId) $(tableId).innerHTML = "";
     return;
   }
   const W = Math.max(320, box.clientWidth || 800);
@@ -287,7 +294,7 @@ function renderChart(now) {
     h.addEventListener("mousemove", (e) => showTip(e, rows[+h.dataset.i], now));
     h.addEventListener("mouseleave", hideTip);
   });
-  $("chart-table").innerHTML = `<table><thead><tr><th>Pick</th><th>Account</th><th>Starts</th><th class="n">Stake</th><th class="n">Agree</th><th class="n">Oppose</th></tr></thead><tbody>${
+  if (tableId) $(tableId).innerHTML = `<table><thead><tr><th>Pick</th><th>Account</th><th>Starts</th><th class="n">Stake</th><th class="n">Agree</th><th class="n">Oppose</th></tr></thead><tbody>${
     rows.map(p => `<tr><td>${esc(p.pick)}</td><td>${esc(p.account)}</td><td>${esc(startText(p, now).text)}</td><td class="n">${usdFull(p.cost)}</td><td class="n">${p.agree_total ? usdFull(p.agree_total) : "—"}</td><td class="n">${p.oppose_total ? usdFull(p.oppose_total) : "—"}</td></tr>`).join("")
   }</tbody></table>`;
 }
@@ -331,7 +338,10 @@ function renderStatus(now) {
 function render() {
   if (!state.data) return;
   const now = Date.now() / 1000;
-  renderTabs(); renderStatus(now); renderChart(now); renderList(now);
+  renderTabs(); renderStatus(now);
+  renderChart(now, soonRows(now), "chart", "chart-table", "Nothing from your accounts starts in the next 2 hours.");
+  renderChart(now, filtered().slice(0, 10), "chart-all", null, "No open positions here right now.");
+  renderList(now);
 }
 
 async function load() {
