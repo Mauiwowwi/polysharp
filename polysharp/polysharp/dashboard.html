@@ -134,7 +134,7 @@ td.n, th.n { text-align: right; }
 
   <section class="card" aria-labelledby="h-soon">
     <h2 id="h-soon">Starting in the next 2 hours</h2>
-    <p class="sub">Biggest 10 positions in games that start within 2 hours. Bars to the right are money on that side (the account plus anyone agreeing); bars to the left are money against it.</p>
+    <p class="sub">Biggest 10 positions in games that start within 2 hours. The bold number is the account's own stake. Green adds other accounts on the same side; orange (left) is other accounts' money on the other side. Positions under $250 are hidden.</p>
     <div class="legend">
       <span><i style="background:var(--s-own)"></i>This account</span>
       <span><i style="background:var(--s-agree)"></i>Other accounts agreeing</span>
@@ -214,7 +214,9 @@ function fillShort(p) {
 }
 
 function filtered() {
-  const rows = (state.data?.positions || []);
+  // positions under the /crowdmin floor ($250 default) are noise: hide them everywhere
+  const floor = state.data?.crowd_min || 0;
+  const rows = (state.data?.positions || []).filter(r => r.cost >= floor);
   return state.sport === "all" ? rows : rows.filter(r => r.sport === state.sport);
 }
 
@@ -300,7 +302,7 @@ function renderChart(now, rows, boxId, tableId, emptyMsg) {
   const maxL = Math.max(...rows.map(p => p.oppose_total), 0);
   // shared scale; left side only takes room when there is opposition
   const total = maxR + maxL;
-  const padL = maxL ? 60 : 0, padR = 116;          // room for the value labels at each bar end
+  const padL = maxL ? 100 : 0, padR = 170;          // room for the value labels at each bar end
   const scale = (plotW - padL - padR) / total;
   const zeroX = plotX + padL + maxL * scale;
   const H = top + rows.length * rowH + 6;
@@ -322,9 +324,9 @@ function renderChart(now, rows, boxId, tableId, emptyMsg) {
     s += bar(zeroX, by, ownW, barH, "var(--s-own)", agW > 0 ? "none" : "right");
     if (agW > 0) s += bar(zeroX + ownW + 2, by, Math.max(agW - 2, 1), barH, "var(--s-agree)", "right");
     if (opW > 0) s += bar(zeroX - opW, by, opW, barH, "var(--s-oppose)", "left");
-    const rTxt = usd(p.cost) + (p.agree_total ? ` +${usd(p.agree_total)}` : "");
-    s += `<text x="${zeroX + ownW + (agW ? agW : 0) + 6}" y="${by + 11}" font-size="11" fill="var(--ink-2)">${esc(rTxt)}</text>`;
-    if (opW > 0) s += `<text x="${zeroX - opW - 6}" y="${by + 11}" text-anchor="end" font-size="11" fill="var(--ink-2)">${esc(usd(p.oppose_total))}</text>`;
+    const rTxt = usd(p.cost) + (p.agree_total ? ` · +${usd(p.agree_total)} agree` : "");
+    s += `<text x="${zeroX + ownW + (agW ? agW : 0) + 6}" y="${by + 11}" font-size="11" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(usd(p.cost))}</tspan>${esc(rTxt.slice(usd(p.cost).length))}</text>`;
+    if (opW > 0) s += `<text x="${zeroX - opW - 6}" y="${by + 11}" text-anchor="end" font-size="11" fill="var(--ink-2)">${esc(usd(p.oppose_total))} oppose</text>`;
     s += `<rect class="hit" data-i="${i}" x="0" y="${y0}" width="${W}" height="${rowH}" fill="transparent"/>`;
   });
   s += `</svg>`;
