@@ -89,6 +89,8 @@ class Config:
 
     # Alert-time filters: skip non-sports markets and in-game (live) fills
     sports_only_alerts: bool = field(default_factory=lambda: _env("SPORTS_ONLY_ALERTS", True, bool))
+    # Skip futures/outrights (league winner, MVP, championship) in alerts, /top10 and the dashboard
+    exclude_futures: bool = field(default_factory=lambda: _env("EXCLUDE_FUTURES", True, bool))
     pregame_only_alerts: bool = field(default_factory=lambda: _env("PREGAME_ONLY_ALERTS", True, bool))
 
     # --- Web dashboard (served by the bot; off until DASHBOARD_KEY is set) ----

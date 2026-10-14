@@ -222,3 +222,13 @@ def test_top10_asks_api_for_open_positions_only():
     from polysharp import main
     src = inspect.getsource(main.App.top_positions)
     assert 'redeemable=False' in src
+
+
+def test_futures_are_recognised():
+    from polysharp.markets import is_future
+    assert is_future({"slug": "epl-winner-2026-27"},
+                     "Will Manchester City win the 2026-27 English Premier League (EPL) Championship?")
+    assert is_future({"slug": "nba-champion-2027"}, "Will the Thunder win the 2027 NBA Finals?")
+    assert not is_future({"slug": "cfb-stan-wake-2026-10-03", "game_start": 1}, "Spread: Wake Forest (-13.5)")
+    assert not is_future({"slug": "unl-cyp-arm-2026-10-02", "game_start": 1}, "Will Cyprus win on 2026-10-02?")
+    assert not is_future({"slug": "atp-hur-gea-2026-10-02"}, "China Open: Hubert Hurkacz vs Arthur Gea")

@@ -16,7 +16,7 @@ from .markets import LEAGUES, SPORTS, Markets, sport_of
 from .selector import deep_eval, passes, suggest
 from .store import Store
 from .telegram import Telegram, esc
-from .markets import is_live
+from .markets import is_future, is_live
 from .watcher import Watcher, american, pick_label
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -208,7 +208,9 @@ class App:
                 and 0 < float(r.get("curPrice") or 0) < 1 and float(r.get("size") or 0) >= 1]
         meta = await self.markets.get({r["conditionId"]: r.get("eventSlug") or r.get("slug") or ""
                                        for r in rows if r.get("conditionId")})
-        sports = [r for r in rows if (meta.get(r.get("conditionId")) or {}).get("sports")]
+        sports = [r for r in rows if (meta.get(r.get("conditionId")) or {}).get("sports")
+                  and not (self.cfg.exclude_futures
+                           and is_future(meta.get(r.get("conditionId")), r.get("title")))]
         other = len(rows) - len(sports)
         pool = sports if self.cfg.sports_only_alerts else rows
         pool.sort(key=lambda r: -float(r.get("initialValue") or 0))

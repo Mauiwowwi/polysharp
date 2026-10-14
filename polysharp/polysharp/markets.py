@@ -92,6 +92,25 @@ def classify_slug(slug):
             "slug": slug or ""}
 
 
+_DATED = re.compile(r"\d{4}-\d{2}-\d{2}")
+_FUTURE_WORDS = re.compile(r"champion|winner|\bwin the\b|\bmvp\b|super bowl|world series|stanley cup|"
+                           r"\bfinals\b|playoffs?|relegat|promoted|top \d|award|rookie of|season|"
+                           r"\b20\d\d[-/]\d\d\b", re.I)
+
+
+def is_future(meta, title=""):
+    """Season-long / outright markets (league winner, MVP, 'make the playoffs').
+
+    Single games carry a kickoff time (gameStartTime) and a dated event slug
+    ('cfb-stan-wake-2026-10-03'); futures have neither."""
+    meta = meta or {}
+    if meta.get("game_start") and not _FUTURE_WORDS.search(title or ""):
+        return False
+    if _DATED.search(meta.get("slug") or ""):
+        return False
+    return True
+
+
 def is_live(meta, trade_ts):
     gs = meta.get("game_start") if meta else None
     return bool(gs) and trade_ts > gs + LIVE_GRACE

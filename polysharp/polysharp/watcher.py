@@ -20,7 +20,7 @@ import time
 import websockets
 
 from .fees import analyze_fill, summarize
-from .markets import is_live, sport_of
+from .markets import is_future, is_live, sport_of
 from .telegram import esc
 
 log = logging.getLogger(__name__)
@@ -364,6 +364,9 @@ class Watcher:
         live = bool(meta) and is_live(meta, f0["ts"])
         if self.cfg.sports_only_alerts and self.markets is not None and \
                 (meta is None or not meta.get("sports")):
+            self.skipped_filtered += 1
+            return
+        if self.cfg.exclude_futures and self.markets is not None and is_future(meta, f0["title"]):
             self.skipped_filtered += 1
             return
         tailed = self.store.was_alerted(wallet, cond)

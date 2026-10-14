@@ -170,5 +170,6 @@ The bot also serves a web page with the top 10 open positions across every accou
 | Variable | Default | |
 |---|---|---|
 | `DASHBOARD_KEY` | (empty = off) | key required in the link |
+| `EXCLUDE_FUTURES` | true | hide futures/outrights (league winner, MVP, championship) from alerts, /top10 and the dashboard |
 | `DASHBOARD_REFRESH` | 30 | seconds between rebuilds |
 | `PORT` | 8080 | set by Railway automatically |
