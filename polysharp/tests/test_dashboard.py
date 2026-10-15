@@ -130,3 +130,13 @@ async def test_dashboard_adds_fill_mix_and_caches_it():
     snap2 = snapshot()
     await d.add_fill_mix(snap2)
     assert len(calls) == n                              # unchanged positions -> cached
+
+
+def test_same_account_both_sides_is_flagged():
+    m = {"o": meta(NOW + 600), "u": meta(NOW + 600)}
+    results = {A: ([pos("o", "ov", "Olimpia Milano vs. BC Dubai: O/U 169.5", "Over", 15000, 0.6),
+                    pos("o", "un", "Olimpia Milano vs. BC Dubai: O/U 169.5", "Under", 15000, 0.4)], m)}
+    rows = build_snapshot(results, {A: "HomeRunHazard"}, crowd_min=250, now=NOW)["positions"]
+    over = next(r for r in rows if r["pick"] == "Over 169.5")
+    assert over["own_other"] == [{"pick": "Under 169.5", "amount": 6000.0, "kind": "opposite", "note": None}]
+    assert over["oppose"] == [] and over["own_other_total"] == 6000.0

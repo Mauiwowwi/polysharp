@@ -111,6 +111,7 @@ td.n, th.n { text-align: right; }
 .crowd .line { font-size: 13px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .crowd .tag { font-size: 11px; font-weight: 700; letter-spacing: .02em; border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
 .crowd .tag.agree { box-shadow: inset 3px 0 0 var(--s-agree); background: var(--chip); }
+.crowd .tag.both { box-shadow: inset 3px 0 0 var(--ink-2); background: var(--chip); }
 .crowd .tag.oppose { box-shadow: inset 3px 0 0 var(--s-oppose); background: var(--chip); }
 .crowd .who { color: var(--ink-2); }
 .crowd .none { color: var(--muted); font-size: 12px; }
@@ -153,7 +154,7 @@ td.n, th.n { text-align: right; }
       <span><i style="background:var(--s-oppose)"></i>Other accounts opposing</span>
     </div>
     <div class="chart" id="chart-all"></div>
-    <p class="list-head">Details · <span style="color:var(--muted)">🚨 TAKEN = mostly paid fees to cross the spread · 🧱 LAID = mostly resting limit orders · ⚖️ MIXED = about half each</span></p>
+    <p class="list-head">Details · <span style="color:var(--muted)">🚨 TAKEN = mostly paid fees to cross the spread · 🧱 LAID = mostly resting limit orders · 🌗 MIXED = about half each</span></p>
     <div id="list"></div>
   </section>
   <p class="err" id="err" hidden></p>
@@ -205,7 +206,7 @@ function fillTag(p) {
   const fees = f.fees >= 1 ? ` · paid ${usdFull(f.fees)} fees` : "";
   if (f.style === "taken") return `<span class="fill" title="Bought mostly by crossing the spread${fees}">🚨 TAKEN ${t}%</span>`;
   if (f.style === "laid") return `<span class="fill" title="Bought mostly with resting limit orders (no fees)">🧱 LAID ${100 - t}%</span>`;
-  return `<span class="fill" title="About half taken, half laid${fees}">⚖️ MIXED ${t}% taken</span>`;
+  return `<span class="fill" title="About half taken, half laid${fees}">🌗 MIXED ${t}% taken</span>`;
 }
 function fillShort(p) {
   const f = p.fill;
@@ -233,8 +234,24 @@ $("tabs").addEventListener("click", (e) => {
   render();
 });
 
+function ownLine(p) {
+  // the same account holding the other side of this game (over AND under, both teams, a middle)
+  const o = p.own_other || [];
+  if (!o.length) return "";
+  const what = o.map(x => {
+    const why = x.kind === "middle" && x.note ? ` → middle, both win if ${x.note}`
+              : x.kind === "gap" && x.note ? ` → both lose if ${x.note}` : "";
+    return `<b style="color:var(--ink)">${esc(x.pick)}</b> ${usdFull(x.amount)}${esc(why)}`;
+  }).join(" · ");
+  const diff = p.cost - p.own_other_total;
+  const lean = Math.abs(diff) < 1 ? "even on both" : diff > 0 ? `bigger on ${esc(p.pick)} by ${usdFull(diff)}` : `bigger on the other side by ${usdFull(-diff)}`;
+  return `<div class="line"><span class="tag both">⚖️ BOTH SIDES</span><span class="who">also holds ${what} <span style="color:var(--muted)">(${lean})</span></span></div>`;
+}
+
 function crowdLines(p) {
   const parts = [];
+  const own = ownLine(p);
+  if (own) parts.push(own);
   if (p.agree.length) {
     const who = p.agree.map(a => `<b style="color:var(--ink)">${esc(a.account)}</b> ${usd(a.amount)} <span style="color:var(--muted)">(${esc(a.picks.join(", "))})</span>`).join(" · ");
     parts.push(`<div class="line"><span class="tag agree">🤝 AGREE ${usd(p.agree_total)}</span><span class="who">${who}</span></div>`);
@@ -243,7 +260,7 @@ function crowdLines(p) {
     const who = p.oppose.map(a => `<b style="color:var(--ink)">${esc(a.account)}</b> ${usd(a.amount)} <span style="color:var(--muted)">(${esc(a.picks.join(", "))})</span>`).join(" · ");
     parts.push(`<div class="line"><span class="tag oppose">⚔️ OPPOSE ${usd(p.oppose_total)}</span><span class="who">${who}</span></div>`);
   }
-  if (!parts.length) parts.push(`<span class="none">No other accounts on this game</span>`);
+  if (!p.agree.length && !p.oppose.length) parts.push(`<span class="none">No other accounts on this game</span>`);
   return parts.join("");
 }
 
@@ -314,10 +331,10 @@ function renderChart(now, rows, boxId, tableId, emptyMsg) {
     const st = startText(p, now).text;
     if (narrow) {
       s += `<text x="${plotX}" y="${y0 + 14}" font-size="12" fill="var(--ink)" font-weight="600">${esc(chartLabel(p))}</text>`;
-      s += `<text x="${plotX}" y="${y0 + 29}" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}${esc(fillShort(p))}</text>`;
+      s += `<text x="${plotX}" y="${y0 + 29}" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}${esc(fillShort(p))}${(p.own_other || []).length ? " · ⚖️ both sides" : ""}</text>`;
     } else {
       s += `<text x="${labelW}" y="${by + 6}" text-anchor="end" font-size="12" fill="var(--ink)" font-weight="600">${esc(chartLabel(p))}</text>`;
-      s += `<text x="${labelW}" y="${by + 19}" text-anchor="end" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}${esc(fillShort(p))}</text>`;
+      s += `<text x="${labelW}" y="${by + 19}" text-anchor="end" font-size="12" fill="var(--ink-2)"><tspan font-weight="700" fill="var(--ink)">${esc(p.account)}</tspan> · ${esc(st)}${esc(fillShort(p))}${(p.own_other || []).length ? " · ⚖️ both sides" : ""}</text>`;
     }
     const ownW = p.cost * scale, agW = p.agree_total * scale, opW = p.oppose_total * scale;
     // own stake (anchored at zero, rounded data end only if nothing stacks after it)
@@ -358,7 +375,8 @@ function showTip(e, p, now) {
     <div class="row"><span class="k">Avg / last</span><span>${esc(p.avg_odds)} / ${esc(p.cur_odds)}</span></div>
     ${p.fill ? `<div class="row"><span class="k">Filled</span><span>${Math.round(p.fill.taker_share * 100)}% taken · ${100 - Math.round(p.fill.taker_share * 100)}% laid</span></div>` : ""}
     ${p.agree.length ? `<div style="margin-top:6px"><b>🤝 Agree ${usdFull(p.agree_total)}</b></div>${people(p.agree)}` : ""}
-    ${p.oppose.length ? `<div style="margin-top:6px"><b>⚔️ Oppose ${usdFull(p.oppose_total)}</b></div>${people(p.oppose)}` : ""}`;
+    ${p.oppose.length ? `<div style="margin-top:6px"><b>⚔️ Oppose ${usdFull(p.oppose_total)}</b></div>${people(p.oppose)}` : ""}
+    ${(p.own_other || []).length ? `<div style="margin-top:6px"><b>⚖️ Same account also holds</b></div>${p.own_other.map(x => `<div class="row"><span class="k">${esc(x.pick)}</span><span>${usdFull(x.amount)}</span></div>`).join("")}` : ""}`;
   const pad = 14, tw = 280;
   let x = e.clientX + pad, y = e.clientY + pad;
   if (x + tw > innerWidth) x = e.clientX - tw - pad;

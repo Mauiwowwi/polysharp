@@ -47,13 +47,13 @@ async def egress_check(cfg, api):
 
 
 def fill_tag(mix):
-    """'🚨 TAKEN 92%' (paid fees) / '🧱 LAID 85%' (resting limits) / '⚖️ MIXED 55% taken'."""
+    """'🚨 TAKEN 92%' (paid fees) / '🧱 LAID 85%' (resting limits) / '🌗 MIXED 55% taken'."""
     t = mix["taker_share"]
     if mix["style"] == "taken":
         return f"🚨 TAKEN {t:.0%}"
     if mix["style"] == "laid":
         return f"🧱 LAID {1 - t:.0%}"
-    return f"⚖️ MIXED {t:.0%} taken"
+    return f"🌗 MIXED {t:.0%} taken"
 
 
 def profile_link(addr, name):

@@ -67,16 +67,23 @@ def build_snapshot(results, names, crowd_min=250.0, now=None):
 
     for row in rows:
         agree, oppose = {}, {}
+        row["own_other"] = []          # this account's OTHER side of the same game (both sides)
         for o in by_game.get(row["_game"], []):
-            if o["address"] == row["address"]:
+            if o is row:
                 continue
+            note = None
             if o["_cond"] == row["_cond"]:
                 kind = "same" if o["_asset"] == row["_asset"] else "opposite"
             else:
                 rel = relate(row["_lean"], o["_lean"])
                 if not rel:
                     continue
-                kind = rel[0]
+                kind, note = rel
+            if o["address"] == row["address"]:
+                if kind != "same":
+                    row["own_other"].append({"pick": o["pick"], "amount": round(o["cost"], 2),
+                                             "kind": kind, "note": note})
+                continue
             side = agree if kind == "same" else oppose
             a = side.setdefault(o["address"], {"account": o["account"], "amount": 0.0, "picks": []})
             a["amount"] += o["cost"]
@@ -88,6 +95,8 @@ def build_snapshot(results, names, crowd_min=250.0, now=None):
                                 if v["amount"] >= crowd_min), key=lambda v: -v["amount"])
         row["agree_total"] = round(sum(v["amount"] for v in row["agree"]), 2)
         row["oppose_total"] = round(sum(v["amount"] for v in row["oppose"]), 2)
+        row["own_other"].sort(key=lambda v: -v["amount"])
+        row["own_other_total"] = round(sum(v["amount"] for v in row["own_other"]), 2)
 
     for row in rows:
         for k in [k for k in row if k.startswith("_")]:
