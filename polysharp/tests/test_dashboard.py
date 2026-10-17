@@ -43,7 +43,7 @@ def test_snapshot_rows_sorted_with_cross_line_crowd():
     snap = snapshot()
     rows = snap["positions"]
     assert [r["cost"] for r in rows] == sorted((r["cost"] for r in rows), reverse=True)
-    hrh = next(r for r in rows if r["account"] == "HomeRunHazard" and r["sport"] == "football"
+    hrh = next(r for r in rows if r["account"] == "HomeRunHazard" and r["sport"] == "cfb"
                and r["league"] == "CFB")
     assert hrh["pick"] == "Georgia -25.5" and hrh["status"] == "upcoming"
     # UpTheBlues: same market + alt line, added up into one entry; totals bet is unrelated
@@ -54,7 +54,7 @@ def test_snapshot_rows_sorted_with_cross_line_crowd():
     assert opp["account"] == "Kch-Temp" and opp["picks"] == ["Vanderbilt +23.5", "Vanderbilt +25.5"]
     assert hrh["oppose_total"] == round(21190 * 0.519 + 50, 2)
     assert not any(k.startswith("_") for k in hrh)
-    assert {s["key"] for s in snap["sports"]} == {"football"}
+    assert {s["key"] for s in snap["sports"]} == {"football", "cfb"}
     json.dumps(snap)                                   # JSON-ready
 
 

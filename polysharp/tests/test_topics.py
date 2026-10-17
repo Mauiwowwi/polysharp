@@ -7,7 +7,7 @@ GROUP, ME = "-1001234567890", "555"
 
 
 def test_sport_buckets():
-    assert sport_of("nfl") == "football" and sport_of("CFB") == "football"
+    assert sport_of("nfl") == "football" and sport_of("CFB") == "cfb" and sport_of("ncaaf") == "cfb"
     assert sport_of("mlb") == "baseball" and sport_of("euroleague") == "basketball"
     assert sport_of("lal") == "soccer" and sport_of("unl") == "soccer"
     assert sport_of("atp") == "tennis" and sport_of("ufc") == "fighting"
@@ -85,7 +85,7 @@ async def test_ensure_topics_creates_all_tabs_once(app):
     app.tg.create_topic = fake_create
     line = await app.ensure_topics()
     assert line == f"Sport topics: {len(SPORTS)} tabs ready"
-    assert made[0] == "🏈 Football" and len(made) == len(SPORTS)
+    assert made[:2] == ["🏈 NFL", "🎓 College Football"] and len(made) == len(SPORTS)
     assert app.store.get("topics")[GROUP]["football"] == 101
     await app.ensure_topics()                              # restart: nothing re-created
     assert len(made) == len(SPORTS)
@@ -212,3 +212,24 @@ async def test_tabs_get_full_alert_by_default(tmp_path):
     await tg.send_alert("FULL detailed alert", "hockey", short=None)
     assert posted == [(GROUP, 5, "FULL detailed alert")]      # one message, full, in the tab
     await tg.close()
+
+
+@pytest.mark.asyncio
+async def test_existing_football_tab_is_renamed_to_nfl(app):
+    renamed = []
+
+    async def fake_rename(chat, tid, name):
+        renamed.append((tid, name))
+        return True
+
+    async def fake_create(chat, name):
+        return 500, None
+    app.tg.rename_topic, app.tg.create_topic = fake_rename, fake_create
+    app.store.set("topics", {GROUP: {k: 10 + i for i, k in enumerate(SPORTS) if k != "cfb"}})
+    app.store.set("topic_titles", {GROUP: {"football": "🏈 Football"}})
+    await app.ensure_topics()
+    assert (10, "🏈 NFL") in renamed
+    assert app.store.get("topics")[GROUP]["cfb"] == 500           # new College Football tab
+    renamed.clear()
+    await app.ensure_topics()
+    assert renamed == []                                          # only renamed once

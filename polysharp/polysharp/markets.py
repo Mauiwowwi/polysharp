@@ -29,7 +29,8 @@ LEAGUES = {
     "afl", "nrl", "rugby", "euroleague", "nbl", "khl", "shl", "ahl", "xfl", "ufl",
 }
 SPORTS = {   # sport bucket -> (topic title, leagues)
-    "football": ("🏈 Football", {"nfl", "cfb", "ncaaf", "cfl", "xfl", "ufl"}),
+    "football": ("🏈 NFL", {"nfl", "cfl", "xfl", "ufl"}),           # pro football (key kept for old tabs)
+    "cfb": ("🎓 College Football", {"cfb", "ncaaf"}),
     "baseball": ("⚾ Baseball", {"mlb", "kbo", "npb"}),
     "basketball": ("🏀 Basketball", {"nba", "wnba", "cbb", "ncaab", "ncaaw", "euroleague", "nbl"}),
     "hockey": ("🏒 Hockey", {"nhl", "khl", "shl", "ahl"}),

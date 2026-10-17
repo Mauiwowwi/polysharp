@@ -387,10 +387,15 @@ class App:
             self.tg.topics = {}
             return "Sport topics: off"
         notes = []
+        named = self.store.get("topic_titles", {})        # chat -> {sport: title we last gave it}
         for chat in [c for c in self.tg.chat_ids if c.startswith("-")]:
             have = self.tg.topics.setdefault(chat, {})
             for key, (title, _) in SPORTS.items():
                 if key in have:
+                    # keep existing tabs' names in step (e.g. "🏈 Football" -> "🏈 NFL")
+                    if (named.get(chat) or {}).get(key) != title and \
+                            await self.tg.rename_topic(chat, have[key], title):
+                        named.setdefault(chat, {})[key] = title
                     continue
                 tid, err = await self.tg.create_topic(chat, title)
                 if self.tg.resolve(chat) != chat:          # group id changed mid-setup
@@ -399,6 +404,7 @@ class App:
                     chat = self.tg.resolve(chat)
                 if tid:
                     have[key] = tid
+                    named.setdefault(chat, {})[key] = title
                     continue
                 if err and "not a forum" in err.lower():
                     notes.append("group doesn't have Topics turned on")
@@ -410,6 +416,7 @@ class App:
             if not have:
                 self.tg.topics.pop(chat, None)
         self.store.set("topics", self.tg.topics)
+        self.store.set("topic_titles", named)
         ready = sum(len(v) for v in self.tg.topics.values())
         if ready:
             return f"Sport topics: {ready} tabs ready" + (f" (⚠️ {notes[0]})" if notes else "")

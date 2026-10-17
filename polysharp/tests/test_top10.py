@@ -99,7 +99,7 @@ def strip(t):
 async def test_top10_no_args_shows_buttons(app):
     text, buttons = await app.tg.handlers["top10"]([])
     labels = [lbl for row in buttons for lbl, _ in row]
-    assert labels[:2] == ["🏈 Football", "⚾ Baseball"] and "🌐 All sports" in labels
+    assert labels[:3] == ["🏈 NFL", "🎓 College Football", "⚾ Baseball"] and "🌐 All sports" in labels
     assert labels[-3:] == ["177-letsgo", "alwaysfade", "HomeRunHazard"]
     assert all(data.startswith(("top:0x", "tsp:")) for row in buttons for _, data in row)
     assert all(len(data) <= 64 for row in buttons for _, data in row)     # Telegram limit
@@ -191,7 +191,7 @@ async def test_top10_inside_sport_tab_defaults_to_that_sport(app):
     app.tg.topics = {"-100": {"football": 11}}
     app.tg.current_chat, app.tg.current_thread = "-100", 11
     out = strip(await app.tg.handlers["top10"]([]))
-    assert out.startswith("🏆 Top 3 🏈 Football positions")
+    assert out.startswith("🏆 Top 3 🏈 NFL positions")
     # a wallet name still works inside a tab
     assert "alwaysfade — top" in strip(await app.tg.handlers["top10"](["alwaysfade"]))
 

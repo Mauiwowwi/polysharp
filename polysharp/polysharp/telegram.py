@@ -109,6 +109,16 @@ class Telegram:
         except (httpx.HTTPError, ValueError) as e:
             return None, str(e)
 
+    async def rename_topic(self, chat_id, thread_id, name):
+        """Returns True on success (or when the name was already right)."""
+        try:
+            r = await self.http.post(f"{self.base}/editForumTopic",
+                                     json={"chat_id": self.resolve(chat_id),
+                                           "message_thread_id": int(thread_id), "name": name})
+            return r.status_code == 200 or "not modified" in r.text.lower()
+        except httpx.HTTPError:
+            return False
+
     def resolve(self, chat_id):
         chat_id = str(chat_id)
         return self.migrations.get(chat_id, chat_id)
