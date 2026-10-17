@@ -155,7 +155,6 @@ td.n, th.n { text-align: right; }
       <span><i style="background:var(--s-oppose)"></i>Other accounts opposing</span>
     </div>
     <div class="chart" id="chart-pre"></div>
-    <details class="table" id="det-pre"><summary>Show details — odds, who agrees / opposes</summary><p class="sub" style="margin:8px 0 0"><span style="color:var(--muted)">🚨 TAKEN = mostly paid fees to cross the spread · 🧱 LAID = mostly resting limit orders · 🌗 MIXED = about half each</span></p><div id="list-pre" class="list"></div></details>
   </section>
 
   <section class="card" aria-labelledby="h-live">
@@ -167,7 +166,13 @@ td.n, th.n { text-align: right; }
       <span><i style="background:var(--s-oppose)"></i>Other accounts opposing</span>
     </div>
     <div class="chart" id="chart-live"></div>
-    <details class="table" id="det-live"><summary>Show details — odds, who agrees / opposes</summary><div id="list-live" class="list"></div></details>
+  </section>
+
+  <section class="card" aria-labelledby="h-list">
+    <h2 id="h-list">Top 25 positions — details</h2>
+    <p class="sub" id="list-sub">Every open position (pregame and live), largest stake first, with who's on what.</p>
+    <p class="sub" style="margin-top:-6px"><span style="color:var(--muted)">🚨 TAKEN = mostly paid fees to cross the spread · 🧱 LAID = mostly resting limit orders · 🌗 MIXED = about half each</span></p>
+    <div id="list" class="list"></div>
   </section>
   <p class="err" id="err" hidden></p>
 </div>
@@ -284,8 +289,8 @@ function liveRows() {
   return filtered().filter(p => p.status === "live" || p.status === "started");
 }
 
-function renderList(now, rows, target, emptyMsg) {
-  rows = rows.slice(0, 10);
+function renderList(now, rows, target, emptyMsg, n = 10) {
+  rows = rows.slice(0, n);
   if (!rows.length) { $(target).innerHTML = `<div class="empty">${esc(emptyMsg)}</div>`; return; }
   $(target).innerHTML = rows.map((p, i) => {
     const st = startText(p, now);
@@ -420,9 +425,8 @@ function render() {
   renderChart(now, soonRows(now), "chart", "chart-table", "Nothing from your accounts starts in the next 2 hours.");
   const pre = pregameRows(), live = liveRows();
   renderChart(now, pre.slice(0, 10), "chart-pre", null, "No pregame positions here right now.");
-  renderList(now, pre, "list-pre", "No pregame positions here right now.");
   renderChart(now, live.slice(0, 10), "chart-live", null, "Nothing live right now.");
-  renderList(now, live, "list-live", "Nothing live right now.");
+  renderList(now, filtered(), "list", "No open positions here right now.", 25);
 }
 
 async function load() {
@@ -439,12 +443,6 @@ async function load() {
   }
 }
 
-// remember which Details sections are open
-for (const id of ["det-pre", "det-live"]) {
-  const el = document.getElementById(id);
-  try { el.open = localStorage.getItem("wt-" + id) === "1"; } catch (e) {}
-  el.addEventListener("toggle", () => { try { localStorage.setItem("wt-" + id, el.open ? "1" : "0"); } catch (e) {} });
-}
 themeLabel();
 load();
 setInterval(load, 15000);

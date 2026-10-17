@@ -147,4 +147,4 @@ def test_page_has_three_charts():
     html = open(PAGE, encoding="utf-8").read()
     for cid in ('id="chart"', 'id="chart-pre"', 'id="chart-live"'):
         assert cid in html
-    assert "Top 10 pregame" in html and "Top 10 live now" in html
+    assert "Top 10 pregame" in html and "Top 10 live now" in html and "Top 25 positions" in html
