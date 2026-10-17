@@ -140,3 +140,11 @@ def test_same_account_both_sides_is_flagged():
     over = next(r for r in rows if r["pick"] == "Over 169.5")
     assert over["own_other"] == [{"pick": "Under 169.5", "amount": 6000.0, "kind": "opposite", "note": None}]
     assert over["oppose"] == [] and over["own_other_total"] == 6000.0
+
+
+def test_page_has_three_charts():
+    from polysharp.dashboard import PAGE
+    html = open(PAGE, encoding="utf-8").read()
+    for cid in ('id="chart"', 'id="chart-pre"', 'id="chart-live"'):
+        assert cid in html
+    assert "Top 10 pregame" in html and "Top 10 live now" in html

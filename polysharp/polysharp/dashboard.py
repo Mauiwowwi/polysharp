@@ -136,14 +136,16 @@ class Dashboard:
 
     @staticmethod
     def shown(snap, now=None):
-        """Rows any view can show: top 10 per tab (all + each sport) and each tab's 2-hour window."""
+        """Rows any view can show: per tab (all + each sport) the 2-hour, pregame and live top 10s."""
         now = now or time.time()
         rows = snap["positions"]
         out = {}
         for key in ["all"] + [s["key"] for s in snap["sports"]]:
             tab = rows if key == "all" else [r for r in rows if r["sport"] == key]
             soon = [r for r in tab if r["status"] == "upcoming" and r["start"] and 0 < r["start"] - now <= 7200]
-            for r in tab[:10] + soon[:10]:
+            pre = [r for r in tab if r["status"] in ("upcoming", "unknown")]
+            live = [r for r in tab if r["status"] in ("live", "started")]
+            for r in soon[:10] + pre[:10] + live[:10]:
                 out[r["id"]] = r
         return list(out.values())
 
